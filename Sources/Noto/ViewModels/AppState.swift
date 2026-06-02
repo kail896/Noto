@@ -176,6 +176,10 @@ final class AppState {
 
     func permanentlyDeleteNote(_ note: Note) {
         notes.removeAll { $0.id == note.id }
+        if selectedNoteId == note.id {
+            selectedNoteId = nil
+            editingNote = nil
+        }
         saveData()
     }
 
