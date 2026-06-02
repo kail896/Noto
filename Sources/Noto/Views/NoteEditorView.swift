@@ -16,10 +16,13 @@ struct NoteEditorView: View {
             if let note = state.editingNote {
                 editorContent(note: note)
                     .id(note.id)
+                    .transition(.opacity)
             } else {
                 emptyEditor
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.15), value: state.editingNote?.id)
         .background(state.currentTheme.backgroundColorSwift)
         .background {
             BackgroundTextureView(

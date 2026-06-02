@@ -138,6 +138,8 @@ struct LockScreenView: View {
         case .unlock:
             let success = state.verifyFolderPassword(folderId, password: password)
             if success {
+                state.showLockScreen = false
+                state.pendingLockFolderId = nil
                 resetState()
             }
         case .changePassword:
@@ -167,12 +169,16 @@ struct LockScreenView: View {
                     state.removeFolderPassword(folderId)
                     state.deleteFolder(folder)
                 }
+                state.showLockScreen = false
+                state.pendingLockFolderId = nil
                 resetState()
             }
         case .removePassword:
             let success = state.verifyFolderPassword(folderId, password: password)
             if success {
                 state.removeFolderPassword(folderId)
+                state.showLockScreen = false
+                state.pendingLockFolderId = nil
                 resetState()
             }
         }

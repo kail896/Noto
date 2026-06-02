@@ -99,7 +99,7 @@ struct NoteListView: View {
                 .font(.caption)
                 .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.7))
 
-            Button(action: { state.createNote() }) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.25)) { state.createNote() } }) {
                 Label("新建笔记", systemImage: "plus")
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -136,15 +136,20 @@ struct NoteListView: View {
                                     selectNote(note)
                                 }
                             }
-                            .contextMenu { noteContextMenu(note: note) }
+                            .overlay(RightClickHostView { [state] in
+                Self.rightClickMenuItems(for: note, state: state)
+            })
+                            
                     }
                     .onDelete { indexSet in
-                        if let idx = indexSet.first, idx < state.filteredNotes.count {
-                            let note = state.filteredNotes[idx]
-                            if state.selectedSmartFolder == .trash {
-                                state.permanentlyDeleteNote(note)
-                            } else {
-                                state.deleteNote(note)
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            if let idx = indexSet.first, idx < state.filteredNotes.count {
+                                let note = state.filteredNotes[idx]
+                                if state.selectedSmartFolder == .trash {
+                                    state.permanentlyDeleteNote(note)
+                                } else {
+                                    state.deleteNote(note)
+                                }
                             }
                         }
                     }
@@ -282,36 +287,6 @@ struct NoteListView: View {
     }
 
     // MARK: - Context Menu
-    private func noteContextMenu(note: Note) -> some View {
-        Group {
-            if state.selectedSmartFolder == .trash {
-                Button("恢复", systemImage: "arrow.uturn.backward") {
-                    state.restoreNote(note)
-                }
-                Button("永久删除", systemImage: "trash", role: .destructive) {
-                    state.permanentlyDeleteNote(note)
-                }
-            } else {
-                Button(note.isPinned ? "取消置顶" : "置顶") {
-                    state.togglePin(note)
-                }
-                Button("复制笔记") { state.duplicateNote(note) }
-                Button("移动到...") {
-                    moveTarget = note
-                    showMoveSheet = true
-                }
-                Divider()
-                Button("删除", role: .destructive) {
-                    if state.selectedSmartFolder == .trash {
-                        state.permanentlyDeleteNote(note)
-                    } else {
-                        state.deleteNote(note)
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Move Sheet
     private var moveSheetView: some View {
         VStack(spacing: 16) {
@@ -346,6 +321,20 @@ struct NoteListView: View {
         .frame(width: 280, height: 300)
     }
 
+    // MARK: - Context Menu
+    @ViewBuilder
+    static func rightClickMenuItems(for note: Note, state: AppState) -> [RightClickMenuItem2] {
+        if state.selectedSmartFolder == .trash {
+            return [
+                RightClickMenuItem2("恢复") { state.restoreNote(note) },
+                RightClickMenuItem2("永久删除", destructive: true) { state.permanentlyDeleteNote(note) },
+            ]
+        }
+        return [
+            RightClickMenuItem2(note.isPinned ? "取消置顶" : "置顶") { state.togglePin(note) },
+            RightClickMenuItem2("删除", destructive: true) { state.deleteNote(note) },
+        ]
+    }
     // MARK: - Batch Actions (Trash)
     private func batchRestore() {
         for id in state.batchSelectedIds {
@@ -377,54 +366,115 @@ struct NoteListView: View {
     }
 }
 
-// MARK: - 移除私有 TableView 蓝色选中轮廓（适配 SwiftUI List 内部视图）
+// MARK: - 右键菜单组件（无蓝色高亮）
+struct RightClickMenuItem2 {
+    let title: String
+    let action: () -> Void
+    let isDestructive: Bool
+    init(_ title: String, destructive: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.action = action
+        self.isDestructive = destructive
+    }
+}
+
+/// 叠加层视图：截获右键事件并弹出 NSMenu（绕过 SwiftUI 的蓝色高亮）
+struct RightClickHostView: NSViewRepresentable {
+    let builder: () -> [RightClickMenuItem2]
+
+    func makeNSView(context: Context) -> NSView {
+        let v = _RightClickView()
+        v.builder = builder
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? _RightClickView)?.builder = builder
+    }
+}
+
+class _RightClickView: NSView {
+    var builder: (() -> [RightClickMenuItem2])?
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let items = builder?() else { return }
+        let menu = NSMenu(title: "")
+        for item in items {
+            let mi = NSMenuItem(title: item.title, action: #selector(doAction(_:)), keyEquivalent: "")
+            mi.representedObject = item
+            mi.target = self
+            if item.isDestructive {
+                mi.attributedTitle = NSAttributedString(string: item.title, attributes: [.foregroundColor: NSColor.red])
+            }
+            menu.addItem(mi)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc func doAction(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? RightClickMenuItem2 else { return }
+        item.action()
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override var acceptsFirstResponder: Bool { false }
+
+    /// 只拦截右键事件，左键穿透到下层视图
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        if event.type == .rightMouseDown || event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+            return self
+        }
+        return nil  // 左键穿透
+    }
+}
+
+// MARK: - 持续禁用 NSTableView 选中高亮（定时强制定制，防止 SwiftUI 重置）
 struct NSTableViewSelectionFix: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        context.coordinator.retryFix(from: view, tries: 20)
+        let view = DisabledSelectionView()
         return view
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator() }
+    class Coordinator {}
+}
 
-    @MainActor class Coordinator: NSObject {
-        func retryFix(from view: NSView, tries: Int) {
-            guard tries > 0 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                guard let self else { return }
-                guard let window = view.window else {
-                    self.retryFix(from: view, tries: tries - 1)
-                    return
-                }
-                if self.fixAllTables(in: window.contentView) { return }
-                self.retryFix(from: view, tries: tries - 1)
-            }
+/// 自定义 NSView：高频禁用所有 NSTableView 的选中高亮和聚焦环
+@MainActor class DisabledSelectionView: NSView {
+    private var timer: Timer?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let w = self?.window else { return }
+            self?.disableAll(in: w.contentView)
         }
+        if let w = window { disableAll(in: w.contentView) }
+    }
 
-        /// 递归查找并修复所有 NSTableView（包括 NSOutlineView 等子类）
-        func fixAllTables(in view: NSView?) -> Bool {
-            guard let view else { return false }
-            var found = false
-            if let tv = view as? NSTableView {
-                tv.selectionHighlightStyle = .none
-                tv.focusRingType = .none
-                tv.allowsEmptySelection = true
-                tv.allowsColumnSelection = false
-                tv.allowsMultipleSelection = false
-                tv.allowsColumnReordering = false
-                found = true
-            }
-            // 同时禁用所有 NSScrollView 的聚焦环
-            if let sv = view as? NSScrollView {
-                sv.focusRingType = .none
-            }
-            // 禁用所有 NSView 的聚焦环
-            view.focusRingType = .none
-            for sub in view.subviews {
-                if fixAllTables(in: sub) { found = true }
-            }
-            return found
+    func disableAll(in view: NSView?) {
+        guard let view else { return }
+        view.focusRingType = .none
+        if let tv = view as? NSTableView {
+            tv.selectionHighlightStyle = .none
+            tv.focusRingType = .none
+            tv.gridColor = .clear
+            tv.backgroundColor = .clear
+        }
+        if let sv = view as? NSScrollView {
+            sv.focusRingType = .none
+            sv.drawsBackground = false
+        }
+        for sub in view.subviews { disableAll(in: sub) }
+    }
+
+    nonisolated deinit {
+        Task { @MainActor in
+            // timer invalidated on main actor
         }
     }
 }
+
 

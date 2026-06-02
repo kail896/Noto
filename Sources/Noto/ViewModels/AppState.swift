@@ -294,7 +294,7 @@ final class AppState {
         }
     }
 
-    /// 尝试验证密码并解锁/关闭弹窗
+    /// 尝试验证密码
     func verifyFolderPassword(_ folderId: String, password: String) -> Bool {
         let hash = SHA256.hash(data: Data(password.utf8)).compactMap { String(format: "%02x", $0) }.joined()
         guard let storedHash = folderPasswords[folderId] else { return false }
@@ -303,8 +303,6 @@ final class AppState {
             unlockedFolders.insert(folderId)
             folderFailedAttempts[folderId] = 0
             passwordErrorMessage = nil
-            showLockScreen = false
-            pendingLockFolderId = nil
             saveData()
             return true
         } else {

@@ -185,6 +185,8 @@ struct SidebarView: View {
     private func selectSmart(_ smart: SmartFolder) {
         state.selectedSmartFolder = smart
         state.selectedFolderId = nil
+        state.selectedNoteId = nil
+        state.editingNote = nil
     }
 
     private func smartRow(smart: SmartFolder) -> some View {
@@ -240,6 +242,11 @@ struct SidebarView: View {
 
     private func selectFolder(_ folder: Folder) {
         if folder.isLocked && !state.isFolderUnlocked(folder.id.uuidString) {
+            // 先选中文件夹，再弹出密码输入
+            state.selectedFolderId = folder.id
+            state.selectedSmartFolder = nil
+            state.selectedNoteId = nil
+            state.editingNote = nil
             state.pendingLockFolderId = folder.id.uuidString
             state.passwordErrorMessage = nil
             state.showLockScreen = true
@@ -248,6 +255,8 @@ struct SidebarView: View {
         }
         state.selectedFolderId = folder.id
         state.selectedSmartFolder = nil
+        state.selectedNoteId = nil
+        state.editingNote = nil
     }
 
     // MARK: - Smart Folder Row

@@ -45,7 +45,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { state.createNote() }) {
+                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { state.createNote() } }) {
                     Label("新建笔记", systemImage: "square.and.pencil")
                 }
                 .help("新建笔记 (Cmd+N)")
