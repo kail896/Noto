@@ -10,6 +10,7 @@ struct NoteEditorView: View {
     @State private var saveWorkItem: DispatchWorkItem?
     @State private var savingNoteId: UUID?
     @State private var isLoadingContent: Bool = false
+    @State private var formatState = FormatState()
 
     var body: some View {
         Group {
@@ -111,6 +112,9 @@ struct NoteEditorView: View {
                         onChange: {
                             isEditing = true
                             autoSave(note: note)
+                        },
+                        onSelectionChange: { fmt in
+                            formatState = fmt
                         }
                     )
                     .frame(minHeight: 300)
@@ -149,10 +153,10 @@ struct NoteEditorView: View {
             // ── 第一行：文字样式 + 对齐 + 字号 + 列表 ──
             HStack(spacing: 1) {
                 // 文字样式
-                formattingButton("bold", action: Selector(("bold:")), help: "粗体")
-                formattingButton("italic", action: Selector(("italic:")), help: "斜体")
-                formattingButton("underline", action: Selector(("underline:")), help: "下划线")
-                formattingButton("strikethrough", action: Selector(("strikethrough:")), help: "删除线")
+                formatButton("bold", help: "粗体", isActive: formatState.isBold) { toggleBold() }
+                formatButton("italic", help: "斜体", isActive: formatState.isItalic) { toggleItalic() }
+                formatButton("underline", help: "下划线", isActive: formatState.isUnderline) { toggleUnderline() }
+                formatButton("strikethrough", help: "删除线", isActive: formatState.isStrikethrough) { toggleStrikethrough() }
 
                 Divider().frame(height: 18).padding(.horizontal, 3)
 
@@ -234,27 +238,72 @@ struct NoteEditorView: View {
         }
     }
 
-    // MARK: - Toolbar Button
+    // MARK: - Toolbar Buttons
+    /// 普通工具栏按钮
     private func toolButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 30, height: 26)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        ToolbarButton(icon: icon, help: help, isActive: false, accentColor: state.currentTheme.accentColorSwift, action: action)
     }
 
-    private func formattingButton(_ icon: String, action: Selector, help: String) -> some View {
-        Button(action: { NSApp.sendAction(action, to: nil, from: nil) }) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 30, height: 26)
-                .contentShape(Rectangle())
+    /// 格式切换按钮（带激活态高亮）
+    private func formatButton(_ icon: String, help: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        ToolbarButton(icon: icon, help: help, isActive: isActive, accentColor: state.currentTheme.accentColorSwift, action: action)
+    }
+
+    // MARK: - Formatting Toggle Helpers
+    private func toggleBold() {
+        guard let tv = findFirstResponderTextView() else { return }
+        guard let font = tv.font else { return }
+        let desc = font.fontDescriptor
+        let sym = desc.symbolicTraits
+        let addBold = !sym.contains(.bold)
+        let newSym = addBold ? sym.union(.bold) : sym.subtracting(.bold)
+        let newDesc = desc.withSymbolicTraits(newSym)
+        if let newFont = NSFont(descriptor: newDesc, size: font.pointSize) {
+            tv.font = newFont
         }
-        .buttonStyle(.plain)
-        .help(help)
+    }
+
+    private func toggleItalic() {
+        guard let tv = findFirstResponderTextView() else { return }
+        guard let font = tv.font else { return }
+        let desc = font.fontDescriptor
+        let sym = desc.symbolicTraits
+        let addItalic = !sym.contains(.italic) && !font.fontName.lowercased().contains("italic")
+        let newSym = addItalic ? sym.union(.italic) : sym.subtracting(.italic)
+        let newDesc = desc.withSymbolicTraits(newSym)
+        if let newFont = NSFont(descriptor: newDesc, size: font.pointSize) {
+            tv.font = newFont
+        }
+    }
+
+    private func toggleUnderline() {
+        guard let tv = findFirstResponderTextView() else { return }
+        let selectedRange = tv.selectedRange()
+        guard selectedRange.length > 0 else { return }
+        let storage = tv.textStorage!
+        storage.beginEditing()
+        let existing = storage.attribute(.underlineStyle, at: selectedRange.location, effectiveRange: nil) as? Int
+        if existing != nil, existing! > 0 {
+            storage.removeAttribute(.underlineStyle, range: selectedRange)
+        } else {
+            storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
+        }
+        storage.endEditing()
+    }
+
+    private func toggleStrikethrough() {
+        guard let tv = findFirstResponderTextView() else { return }
+        let selectedRange = tv.selectedRange()
+        guard selectedRange.length > 0 else { return }
+        let storage = tv.textStorage!
+        storage.beginEditing()
+        let existing = storage.attribute(.strikethroughStyle, at: selectedRange.location, effectiveRange: nil) as? Int
+        if existing != nil, existing! > 0 {
+            storage.removeAttribute(.strikethroughStyle, range: selectedRange)
+        } else {
+            storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
+        }
+        storage.endEditing()
     }
 
     // MARK: - Color Picker
@@ -381,20 +430,47 @@ struct NoteEditorView: View {
 
     private func adjustIndent(increase: Bool) {
         guard let tv = findFirstResponderTextView() else { return }
-        let range = tv.selectedRange()
-        let factor: CGFloat = increase ? 24 : -24
+        guard !tv.string.isEmpty else { return }
+        let factor: CGFloat = increase ? 24.0 : -24.0
 
-        tv.textStorage?.beginEditing()
-        tv.textStorage?.enumerateAttribute(.paragraphStyle, in: range) { (style, range, _) in
-            let para = (style as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            let newHead = max(0, para.headIndent + factor)
-            let newTail = max(newHead, para.tailIndent + factor)
-            para.headIndent = newHead
-            para.tailIndent = newTail
+        // 获取当前段落范围
+        let text = tv.string as NSString
+        let sel = tv.selectedRange()
+        let loc = min(sel.location, text.length - 1)
+        let paraRange = text.paragraphRange(for: NSRange(location: loc, length: 0))
+        guard paraRange.length > 0 else { return }
+
+        // 直接修改 textStorage 并让 layoutManager 重排
+        if let storage = tv.textStorage,
+           let lm = tv.layoutManager {
+            let existing = storage.attribute(.paragraphStyle, at: paraRange.location, effectiveRange: nil) as? NSParagraphStyle
+            let para = NSMutableParagraphStyle()
+            // 复制现有样式
+            if let e = existing {
+                para.setParagraphStyle(e)
+            }
+            // 调整缩进
+            para.headIndent = max(0, para.headIndent + factor)
             para.firstLineHeadIndent = max(0, para.firstLineHeadIndent + factor)
-            tv.textStorage?.addAttribute(.paragraphStyle, value: para, range: range)
+            // 保留默认行距
+            if para.lineSpacing < 0.1 {
+                para.lineSpacing = tv.defaultParagraphStyle?.lineSpacing ?? 0
+            }
+
+            // 编辑 textStorage
+            storage.beginEditing()
+            storage.addAttribute(.paragraphStyle, value: para, range: paraRange)
+            storage.endEditing()
+
+            // 强制布局管理器刷新
+            lm.invalidateLayout(forCharacterRange: paraRange, actualCharacterRange: nil)
+            lm.invalidateDisplay(forCharacterRange: paraRange)
         }
-        tv.textStorage?.endEditing()
+
+        // 设置 typing attributes 以便新文字继承
+        var typing = tv.typingAttributes
+        typing[.paragraphStyle] = tv.textStorage?.attribute(.paragraphStyle, at: loc, effectiveRange: nil) as? NSParagraphStyle ?? tv.defaultParagraphStyle
+        tv.typingAttributes = typing
     }
 
     private func insertTodo() {
@@ -518,6 +594,10 @@ struct NoteEditorView: View {
     }
 
     private func insertImage() {
+        // 在弹窗前保存 NSTextView 引用（弹窗期间它会失去第一响应者状态）
+        guard let tv = findFirstResponderTextView() else { return }
+        let textStorage = tv.textStorage
+
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseFiles = true
@@ -528,7 +608,6 @@ struct NoteEditorView: View {
             guard response == .OK, let url = panel.url else { return }
             guard let image = NSImage(contentsOf: url) else { return }
 
-            // Scale down if too large
             let maxSize: CGFloat = 400
             var imageSize = image.size
             if imageSize.width > maxSize || imageSize.height > maxSize {
@@ -542,10 +621,8 @@ struct NoteEditorView: View {
             let attrStr = NSAttributedString(attachment: attachment)
 
             DispatchQueue.main.async {
-                if let tv = self.findFirstResponderTextView() {
-                    tv.textStorage?.append(attrStr)
-                    self.autoSave(note: self.state.editingNote ?? Note.empty())
-                }
+                textStorage?.append(attrStr)
+                self.autoSave(note: self.state.editingNote ?? Note.empty())
             }
         }
     }
@@ -680,11 +757,58 @@ struct NoteEditorView: View {
     }
 }
 
+// MARK: - 工具栏按钮（带悬停 + 激活反馈）
+struct ToolbarButton: View {
+    let icon: String
+    let help: String
+    let isActive: Bool
+    let accentColor: Color
+    let action: () -> Void
+    @State private var isHovered = false
+    @State private var isPressed = false
+
+    var body: some View {
+        Button(action: {
+            isPressed = true
+            action()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { isPressed = false }
+        }) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 26)
+                .foregroundColor(isActive ? accentColor : (isHovered ? .primary : .secondary))
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isActive ? accentColor.opacity(0.15) : (isHovered ? Color.primary.opacity(0.06) : Color.clear))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isActive ? accentColor.opacity(0.3) : (isPressed ? accentColor.opacity(0.5) : Color.clear), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+                .scaleEffect(isPressed ? 0.92 : 1.0)
+                .animation(.easeOut(duration: 0.1), value: isPressed)
+        }
+        .buttonStyle(.plain)
+        .onHover { h in isHovered = h }
+        .help(help)
+    }
+}
+
+// MARK: - 格式状态
+struct FormatState: Equatable {
+    var isBold = false
+    var isItalic = false
+    var isUnderline = false
+    var isStrikethrough = false
+}
+
 // MARK: - Rich Text View (NSViewRepresentable)
 struct RichTextView: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     let theme: NoteTheme
     let onChange: () -> Void
+    var onSelectionChange: (FormatState) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -749,6 +873,28 @@ struct RichTextView: NSViewRepresentable {
 
         init(_ parent: RichTextView) {
             self.parent = parent
+        }
+
+        /// 更新格式状态（粗体/斜体/下划线/删除线）
+        func updateFormatState(from textView: NSTextView) {
+            guard let storage = textView.textStorage, storage.length > 0 else { return }
+            let range = textView.selectedRange()
+            let location = min(range.location, storage.length - 1)
+            let attrs = storage.attributes(at: location, effectiveRange: nil)
+            let font = attrs[.font] as? NSFont
+            let fontName = font?.fontName.lowercased() ?? ""
+            let state = FormatState(
+                isBold: fontName.contains("bold") || (font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false),
+                isItalic: fontName.contains("italic") || fontName.contains("oblique") || (font?.fontDescriptor.symbolicTraits.contains(.italic) ?? false),
+                isUnderline: (attrs[.underlineStyle] as? Int) ?? 0 > 0,
+                isStrikethrough: (attrs[.strikethroughStyle] as? Int) ?? 0 > 0
+            )
+            parent.onSelectionChange(state)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            updateFormatState(from: tv)
         }
 
         func textDidChange(_ notification: Notification) {
