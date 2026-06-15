@@ -214,7 +214,7 @@ struct NoteEditorView: View {
             HStack(spacing: 1) {
                 toolButton("text.quote", help: "引用块") { toggleQuoteBlock() }
                 colorButton
-                toolButton("highlighter", help: "背景高亮") { toggleHighlight() }
+                highlightButton
 
                 Divider().frame(height: 18).padding(.horizontal, 3)
 
@@ -230,15 +230,13 @@ struct NoteEditorView: View {
                 Spacer(minLength: 4)
 
                 // 保存按钮
-                Button(action: { saveCurrentContent(); state.saveData() }) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(width: 30, height: 26)
-                        .foregroundColor(state.currentTheme.secondaryTextColorSwift)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("保存笔记 (Cmd+S)")
+                ToolbarButton(
+                    icon: "square.and.arrow.down",
+                    help: "保存笔记 (Cmd+S)",
+                    isActive: false,
+                    accentColor: state.currentTheme.accentColorSwift,
+                    action: { saveCurrentContent(); state.saveData() }
+                )
                 .keyboardShortcut("s")
             }
             .padding(.horizontal, 6)
@@ -253,9 +251,6 @@ struct NoteEditorView: View {
         )
         .sheet(isPresented: $showLinkSheet) {
             linkInputView
-        }
-        .popover(isPresented: $showColorPicker) {
-            colorPickerView
         }
     }
 
@@ -329,10 +324,19 @@ struct NoteEditorView: View {
 
     // MARK: - Color Picker
     @State private var showColorPicker = false
+    @State private var showHighlightPicker = false
     private let presetColors: [(String, NSColor)] = [
         ("红色", .systemRed), ("橙色", .systemOrange), ("黄色", .systemYellow),
         ("绿色", .systemGreen), ("蓝色", .systemBlue), ("紫色", .systemPurple),
         ("黑色", .black), ("灰色", .gray), ("白色", .white),
+    ]
+    private let highlightColors: [(String, NSColor)] = [
+        ("黄色", .systemYellow), ("绿色", .systemGreen), ("蓝色", .systemBlue),
+        ("橙色", .systemOrange), ("粉色", .systemPink), ("紫色", .systemPurple),
+        ("红色", .systemRed), ("青色", .systemCyan), ("薄荷", .systemMint),
+        ("靛蓝", .systemIndigo), ("棕色", .systemBrown), ("茶色", NSColor(calibratedRed: 0.8, green: 0.7, blue: 0.5, alpha: 1)),
+        ("浅粉", NSColor(calibratedRed: 1, green: 0.8, blue: 0.8, alpha: 1)), ("浅蓝", NSColor(calibratedRed: 0.8, green: 0.85, blue: 1, alpha: 1)),
+        ("浅绿", NSColor(calibratedRed: 0.8, green: 1, blue: 0.85, alpha: 1)), ("浅灰", NSColor(calibratedRed: 0.9, green: 0.9, blue: 0.9, alpha: 1)),
     ]
 
     private var colorButton: some View {
@@ -345,6 +349,9 @@ struct NoteEditorView: View {
         }
         .buttonStyle(.plain)
         .help("字体颜色")
+        .popover(isPresented: $showColorPicker) {
+            colorPickerView
+        }
     }
 
     private var colorPickerView: some View {
@@ -363,6 +370,50 @@ struct NoteEditorView: View {
             .padding(8)
         }
         .frame(width: 180)
+        .padding(8)
+    }
+
+    private var highlightButton: some View {
+        Button(action: { showHighlightPicker.toggle() }) {
+            Image(systemName: "highlighter")
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 26)
+                .foregroundColor(state.currentTheme.accentColorSwift)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("背景高亮")
+        .popover(isPresented: $showHighlightPicker) {
+            highlightPickerView
+        }
+    }
+
+    private var highlightPickerView: some View {
+        VStack(spacing: 8) {
+            Text("选择高亮颜色").font(.caption).foregroundColor(.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 6) {
+                ForEach(highlightColors, id: \.0) { name, color in
+                    Circle()
+                        .fill(Color(nsColor: color).opacity(0.4))
+                        .frame(width: 28, height: 28)
+                        .overlay(Circle().stroke(Color.gray.opacity(0.3), lineWidth: 1))
+                        .onTapGesture { toggleHighlight(color: color) }
+                        .help(name)
+                }
+            }
+            .padding(6)
+            Divider()
+            Button("移除高亮") {
+                if let tv = findFirstResponderTextView() {
+                    tv.textStorage?.removeAttribute(.backgroundColor, range: tv.selectedRange())
+                }
+                showHighlightPicker = false
+            }
+            .font(.caption)
+            .buttonStyle(.plain)
+            .foregroundColor(.red)
+        }
+        .frame(width: 200)
         .padding(8)
     }
 
@@ -513,7 +564,7 @@ struct NoteEditorView: View {
         tv.textStorage?.addAttribute(.foregroundColor, value: color, range: range)
     }
 
-    private func toggleHighlight() {
+    private func toggleHighlight(color: NSColor = .systemYellow) {
         guard let tv = findFirstResponderTextView() else { return }
         let range = tv.selectedRange()
         guard range.length > 0 else { return }
@@ -529,8 +580,7 @@ struct NoteEditorView: View {
         if isHighlighted {
             storage.removeAttribute(.backgroundColor, range: range)
         } else {
-            let highlightColor = NSColor.systemYellow.withAlphaComponent(0.3)
-            storage.addAttribute(.backgroundColor, value: highlightColor, range: range)
+            storage.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.3), range: range)
         }
         storage.endEditing()
     }
