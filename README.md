@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Resources/Noto.icns" width="120" height="120" alt="Noto">
+  <img src="Resources/Noto.png" width="120" height="120" alt="Noto">
   <h1>Noto</h1>
   <p><strong>极简 · 优雅 · 个性</strong></p>
   <p>原生 macOS 笔记应用 · 适配 Apple Silicon</p>
