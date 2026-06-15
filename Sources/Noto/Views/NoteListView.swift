@@ -3,8 +3,6 @@ import SwiftUI
 // MARK: - 笔记列表
 struct NoteListView: View {
     @Environment(AppState.self) private var state
-    @State private var showMoveSheet: Bool = false
-    @State private var moveTarget: Note?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,7 +23,10 @@ struct NoteListView: View {
                 intensity: state.themeIntensity * 0.6
             )
         }
-        .sheet(isPresented: $showMoveSheet) {
+        .sheet(isPresented: Binding(
+            get: { state.showNoteMoveSheet },
+            set: { state.showNoteMoveSheet = $0 }
+        )) {
             moveSheetView
         }
     }
@@ -38,6 +39,38 @@ struct NoteListView: View {
                 .foregroundColor(state.currentTheme.textColorSwift)
 
             Spacer()
+
+            // 排序选择
+            if !state.isBatchMode {
+                Menu {
+                    ForEach(SortOption.allCases) { option in
+                        Button {
+                            state.sortOption = option
+                            state.saveData()
+                        } label: {
+                            HStack {
+                                Text(option.label)
+                                if state.sortOption == option {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: state.sortOption.icon)
+                            .font(.caption)
+                        Text(state.sortOption.label)
+                            .font(.caption)
+                    }
+                    .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .padding(.trailing, 4)
+                .help("排序方式")
+            }
 
             if state.isBatchMode {
                 Button(state.batchSelectedIds.count == state.filteredNotes.count ? "取消全选" : "全选") {
@@ -99,7 +132,7 @@ struct NoteListView: View {
                 .font(.caption)
                 .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.7))
 
-            Button(action: { withAnimation(.easeInOut(duration: 0.25)) { state.createNote() } }) {
+            Button(action: { withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.85)) { state.createNote() } }) {
                 Label("新建笔记", systemImage: "plus")
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -142,7 +175,7 @@ struct NoteListView: View {
                             
                     }
                     .onDelete { indexSet in
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.9)) {
                             if let idx = indexSet.first, idx < state.filteredNotes.count {
                                 let note = state.filteredNotes[idx]
                                 if state.selectedSmartFolder == .trash {
@@ -156,14 +189,19 @@ struct NoteListView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .animation(.easeInOut(duration: 0.15), value: state.selectedNoteId)
+                .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.9), value: state.filteredNotes.count)
                 .background(NSTableViewSelectionFix())
             }
 
             // 批量操作栏
             if state.isBatchMode {
                 batchActionBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .id("list-\(state.selectedSmartFolder?.rawValue ?? "")-\(state.selectedFolderId?.uuidString ?? "")")
+        .transition(.opacity)
     }
 
     // MARK: - Batch Action Bar
@@ -173,7 +211,10 @@ struct NoteListView: View {
                 Button {
                     batchRestore()
                 } label: {
-                    Label("恢复", systemImage: "arrow.uturn.backward")
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                        Text("恢复").lineLimit(1).fixedSize()
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(state.batchSelectedIds.isEmpty)
@@ -181,7 +222,10 @@ struct NoteListView: View {
                 Button {
                     batchPermanentDelete()
                 } label: {
-                    Label("永久删除", systemImage: "trash")
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                        Text("永久删除").lineLimit(1).fixedSize()
+                    }
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.red)
@@ -190,16 +234,22 @@ struct NoteListView: View {
                 Button {
                     state.batchDelete()
                 } label: {
-                    Label("删除", systemImage: "trash")
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                        Text("删除").lineLimit(1).fixedSize()
+                    }
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.red)
                 .disabled(state.batchSelectedIds.isEmpty)
 
                 Button {
-                    showMoveSheet = true
+                    state.showNoteMoveSheet = true
                 } label: {
-                    Label("移动", systemImage: "folder")
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                        Text("移动").lineLimit(1).fixedSize()
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(state.batchSelectedIds.isEmpty)
@@ -207,7 +257,10 @@ struct NoteListView: View {
                 Button {
                     state.batchTogglePin()
                 } label: {
-                    Label("置顶", systemImage: "pin")
+                    HStack(spacing: 4) {
+                        Image(systemName: "pin")
+                        Text("置顶").lineLimit(1).fixedSize()
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(state.batchSelectedIds.isEmpty)
@@ -286,7 +339,6 @@ struct NoteListView: View {
         )
     }
 
-    // MARK: - Context Menu
     // MARK: - Move Sheet
     private var moveSheetView: some View {
         VStack(spacing: 16) {
@@ -297,10 +349,11 @@ struct NoteListView: View {
                 Button(action: {
                     if state.isBatchMode {
                         state.batchMove(to: folder.id)
-                    } else if let note = moveTarget {
-                        state.moveNote(note.id, to: folder.id)
+                    } else if let noteId = state.movingNoteId {
+                        state.moveNote(noteId, to: folder.id)
+                        state.movingNoteId = nil
                     }
-                    showMoveSheet = false
+                    state.showNoteMoveSheet = false
                 }) {
                     HStack {
                         Image(systemName: folder.icon)
@@ -314,7 +367,7 @@ struct NoteListView: View {
             }
             .frame(height: 200)
 
-            Button("取消") { showMoveSheet = false }
+            Button("取消") { state.showNoteMoveSheet = false }
                 .keyboardShortcut(.escape)
         }
         .padding()
@@ -322,17 +375,26 @@ struct NoteListView: View {
     }
 
     // MARK: - Context Menu
-    @ViewBuilder
     static func rightClickMenuItems(for note: Note, state: AppState) -> [RightClickMenuItem2] {
         if state.selectedSmartFolder == .trash {
             return [
-                RightClickMenuItem2("恢复") { state.restoreNote(note) },
-                RightClickMenuItem2("永久删除", destructive: true) { state.permanentlyDeleteNote(note) },
+                RightClickMenuItem2("恢复", systemImage: "arrow.uturn.backward") { state.restoreNote(note) },
+                RightClickMenuItem2("永久删除", systemImage: "trash", destructive: true) { state.permanentlyDeleteNote(note) },
+                RightClickMenuItem2.separator(),
+                RightClickMenuItem2("清空最近删除", systemImage: "trash.slash", destructive: true) { state.emptyTrash() },
             ]
         }
         return [
-            RightClickMenuItem2(note.isPinned ? "取消置顶" : "置顶") { state.togglePin(note) },
-            RightClickMenuItem2("删除", destructive: true) { state.deleteNote(note) },
+            RightClickMenuItem2("新建笔记", systemImage: "square.and.pencil") { withAnimation { state.createNote() } },
+            RightClickMenuItem2.separator(),
+            RightClickMenuItem2(note.isPinned ? "取消置顶" : "置顶", systemImage: "pin") { state.togglePin(note) },
+            RightClickMenuItem2("复制笔记", systemImage: "doc.on.doc") { state.duplicateNote(note) },
+            RightClickMenuItem2("移动到...", systemImage: "folder") {
+                state.movingNoteId = note.id
+                state.showNoteMoveSheet = true
+            },
+            RightClickMenuItem2.separator(),
+            RightClickMenuItem2("删除", systemImage: "trash", destructive: true) { state.deleteNote(note) },
         ]
     }
     // MARK: - Batch Actions (Trash)
@@ -369,12 +431,29 @@ struct NoteListView: View {
 // MARK: - 右键菜单组件（无蓝色高亮）
 struct RightClickMenuItem2 {
     let title: String
+    let systemImage: String?
     let action: () -> Void
     let isDestructive: Bool
-    init(_ title: String, destructive: Bool = false, action: @escaping () -> Void) {
+    let isSeparator: Bool
+
+    init(_ title: String, systemImage: String? = nil, destructive: Bool = false, action: @escaping () -> Void) {
         self.title = title
+        self.systemImage = systemImage
         self.action = action
         self.isDestructive = destructive
+        self.isSeparator = false
+    }
+
+    static func separator() -> RightClickMenuItem2 {
+        RightClickMenuItem2(title: "", systemImage: nil, destructive: false, action: {}, isSeparator: true)
+    }
+
+    private init(title: String, systemImage: String?, destructive: Bool, action: @escaping () -> Void, isSeparator: Bool) {
+        self.title = title
+        self.systemImage = systemImage
+        self.action = action
+        self.isDestructive = destructive
+        self.isSeparator = isSeparator
     }
 }
 
@@ -399,11 +478,18 @@ class _RightClickView: NSView {
         guard let items = builder?() else { return }
         let menu = NSMenu(title: "")
         for item in items {
+            if item.isSeparator {
+                menu.addItem(NSMenuItem.separator())
+                continue
+            }
             let mi = NSMenuItem(title: item.title, action: #selector(doAction(_:)), keyEquivalent: "")
             mi.representedObject = item
             mi.target = self
             if item.isDestructive {
                 mi.attributedTitle = NSAttributedString(string: item.title, attributes: [.foregroundColor: NSColor.red])
+            }
+            if let icon = item.systemImage, let img = NSImage(systemSymbolName: icon, accessibilityDescription: item.title) {
+                mi.image = img
             }
             menu.addItem(mi)
         }

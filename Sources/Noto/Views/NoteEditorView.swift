@@ -11,19 +11,18 @@ struct NoteEditorView: View {
     @State private var savingNoteId: UUID?
     @State private var isLoadingContent: Bool = false
     @State private var formatState = FormatState()
+    @State private var slideOffset: CGFloat = 0
 
     var body: some View {
         Group {
             if let note = state.editingNote {
                 editorContent(note: note)
-                    .id(note.id)
-                    .transition(.opacity)
+                    .offset(x: slideOffset)
+                    .opacity(slideOffset == 0 ? 1 : Double(max(0, 1 - slideOffset / 200)))
             } else {
                 emptyEditor
-                    .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: state.editingNote?.id)
         .background(state.currentTheme.backgroundColorSwift)
         .background {
             BackgroundTextureView(
@@ -32,12 +31,20 @@ struct NoteEditorView: View {
             )
         }
         .onChange(of: state.selectedNoteId) { _, newId in
+            // 触发抽屉滑入动画：先将内容推到左侧
+            slideOffset = -200
             // 后台保存当前内容
             saveCurrentContentAsync()
             // 后台加载新笔记内容
             if let id = newId, let note = state.notes.first(where: { $0.id == id }) {
                 isLoadingContent = true
                 loadContentAsync(note)
+                // 延迟一帧后滑动归位（此时内容已加载）
+                DispatchQueue.main.async {
+                    withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.82)) {
+                        slideOffset = 0
+                    }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
@@ -80,46 +87,48 @@ struct NoteEditorView: View {
         VStack(spacing: 0) {
             formattingToolbar
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    titleField(note: note)
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        titleField(note: note)
 
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .font(.caption2)
-                            .foregroundColor(state.currentTheme.secondaryTextColorSwift)
-                        Text("上次编辑 \(note.formattedDate)")
-                            .font(.caption2)
-                            .foregroundColor(state.currentTheme.secondaryTextColorSwift)
-                        if note.isPinned {
-                            Text("·")
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock")
+                                .font(.caption2)
                                 .foregroundColor(state.currentTheme.secondaryTextColorSwift)
-                            Image(systemName: "pin.fill")
+                            Text("上次编辑 \(note.formattedDate)")
                                 .font(.caption2)
-                                .foregroundColor(state.currentTheme.accentColorSwift)
-                            Text("已置顶")
-                                .font(.caption2)
-                                .foregroundColor(state.currentTheme.accentColorSwift)
+                                .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                            if note.isPinned {
+                                Text("·")
+                                    .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                                Image(systemName: "pin.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(state.currentTheme.accentColorSwift)
+                                Text("已置顶")
+                                    .font(.caption2)
+                                    .foregroundColor(state.currentTheme.accentColorSwift)
+                            }
                         }
+
+                        Divider()
+                            .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.3))
+
+                        RichTextView(
+                            attributedText: $editorContent,
+                            theme: state.currentTheme,
+                            onChange: {
+                                isEditing = true
+                                autoSave(note: note)
+                            },
+                            onSelectionChange: { fmt in
+                                formatState = fmt
+                            }
+                        )
+                        .frame(minHeight: max(300, geo.size.height - 150))
                     }
-
-                    Divider()
-                        .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.3))
-
-                    RichTextView(
-                        attributedText: $editorContent,
-                        theme: state.currentTheme,
-                        onChange: {
-                            isEditing = true
-                            autoSave(note: note)
-                        },
-                        onSelectionChange: { fmt in
-                            formatState = fmt
-                        }
-                    )
-                    .frame(minHeight: 300)
+                    .padding(24)
                 }
-                .padding(24)
             }
         }
         .onAppear {

@@ -3,6 +3,29 @@ import Combine
 import AppKit
 import CryptoKit
 
+// MARK: - 排序选项
+enum SortOption: String, Codable, CaseIterable, Identifiable {
+    case updatedAt = "updatedAt"
+    case createdAt = "createdAt"
+    case title = "title"
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .updatedAt: return "编辑时间"
+        case .createdAt: return "创建时间"
+        case .title: return "标题"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .updatedAt: return "clock"
+        case .createdAt: return "calendar.badge.plus"
+        case .title: return "textformat.abc"
+        }
+    }
+}
+
 // MARK: - 暗色模式偏好
 enum DarkModePreference: String, Codable, CaseIterable, Identifiable {
     case system = "system"
@@ -35,9 +58,14 @@ final class AppState {
     // 界面状态
     var searchText: String = ""
     var isSearching: Bool = false
-    var sidebarWidth: CGFloat = 220
+    var sidebarWidth: CGFloat = 200
+    var noteListWidth: CGFloat = 260
+    var sortOption: SortOption = .updatedAt
+    var trashRetentionDays: Int = 30  // 最近删除保留天数
     var showThemeEditor: Bool = false
     var showSettings: Bool = false
+    var showNoteMoveSheet: Bool = false
+    var movingNoteId: UUID?
 
     // 主题
     var customThemes: [NoteTheme] = []
@@ -48,7 +76,8 @@ final class AppState {
     var darkModePreference: DarkModePreference = .system
 
     // 密码管理
-    var folderPasswords: [String: String] = [:]      // UUID字符串 -> SHA256 hex
+    var folderPasswords: [String: String] = [:]      // UUID字符串 -> SHA256(salt+password) hex
+    var folderSalts: [String: String] = [:]           // UUID字符串 -> 随机盐值 hex
     var folderPasswordHints: [String: String] = [:]
     var folderFailedAttempts: [String: Int] = [:]
     var unlockedFolders: Set<String> = []             // 已解锁的文件夹ID集合
@@ -98,14 +127,37 @@ final class AppState {
             result = activeNotes
         }
 
+        // 最终排序：置顶 > 选中的排序方式 > 在 notes 数组中的原始位置
+        let notePositions: [UUID: Int] = {
+            var pos: [UUID: Int] = [:]
+            for (i, n) in notes.enumerated() { pos[n.id] = i }
+            return pos
+        }()
+
+        func sortNotes(_ a: Note, _ b: Note) -> Bool {
+            if a.isPinned != b.isPinned { return a.isPinned }
+            // 根据排序选项比较
+            switch sortOption {
+            case .updatedAt:
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+            case .createdAt:
+                if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
+            case .title:
+                let cmp = a.title.localizedCompare(b.title)
+                if cmp != .orderedSame { return cmp == .orderedAscending }
+            }
+            // 用 notes 数组中的索引作为最终排序依据（确保不跳动）
+            return (notePositions[a.id] ?? 0) < (notePositions[b.id] ?? 0)
+        }
+
         if searchText.isEmpty {
-            return result.sorted { $0.isPinned && !$1.isPinned ? true : $0.updatedAt > $1.updatedAt }
+            return result.sorted(by: sortNotes)
         } else {
             return result.filter {
                 $0.title.localizedCaseInsensitiveContains(searchText) ||
                 $0.plainText.localizedCaseInsensitiveContains(searchText)
             }
-            .sorted { $0.updatedAt > $1.updatedAt }
+            .sorted(by: sortNotes)
         }
     }
 
@@ -127,10 +179,37 @@ final class AppState {
 
     // MARK: - 初始化
     init() {
-        loadData()
+        // 先确定存储位置，再加载数据（避免触发 iCloud 迁移）
+        let isICloudOn = UserDefaults.standard.bool(forKey: "iCloudEnabled")
+        let dir: URL
+        if isICloudOn, let iCloudURL = Self.iCloudDriveURL {
+            dir = iCloudURL
+        } else {
+            dir = Self.appSupportDir
+        }
+        loadData(from: dir)
+
+        // 如果本地无数据但 iCloud 有，自动切换
+        if notes.isEmpty, folders.isEmpty,
+           let iCloudURL = Self.iCloudDriveURL,
+           FileManager.default.fileExists(atPath: iCloudURL.appendingPathComponent("notes.json").path) {
+            // 直接设 UserDefaults 但不触发迁移（不调用 setter 的 side effect）
+            UserDefaults.standard.set(true, forKey: "iCloudEnabled")
+            loadData(from: iCloudURL)  // 从 iCloud 重新加载
+        }
+
         if folders.isEmpty {
             folders = Folder.defaultFolders
+        } else {
+            // 迁移：重命名旧版"全部笔记"文件夹（与智能分类重名）
+            for i in folders.indices where folders[i].name == "全部笔记" {
+                folders[i].name = "默认"
+                folders[i].icon = "tray"
+            }
         }
+
+        // 清理过期回收站笔记
+        cleanupTrash()
     }
 
     // MARK: - 笔记操作
@@ -222,6 +301,17 @@ final class AppState {
         saveData()
     }
 
+    /// 清理超过保留天数的回收站笔记（0 = 不自动删除）
+    func cleanupTrash() {
+        guard trashRetentionDays > 0 else { return }
+        let cutoff = Date().addingTimeInterval(-Double(trashRetentionDays) * 86400)
+        let toRemove = notes.filter { $0.isDeleted && ($0.deletedAt ?? $0.updatedAt) < cutoff }
+        if !toRemove.isEmpty {
+            notes.removeAll { note in toRemove.contains(where: { $0.id == note.id }) }
+            saveData()
+        }
+    }
+
     // MARK: - 文件夹操作
     func createFolder(name: String, icon: String = "folder") {
         let folder = Folder(name: name, icon: icon, sortOrder: folders.count)
@@ -251,9 +341,11 @@ final class AppState {
     }
 
     // MARK: - 密码操作
-    /// 为文件夹设置密码
+    /// 为文件夹设置密码（SHA256 + 随机盐值）
     func setFolderPassword(_ folderId: String, password: String, hint: String) {
-        let hash = SHA256.hash(data: Data(password.utf8)).compactMap { String(format: "%02x", $0) }.joined()
+        let salt = UUID().uuidString
+        let hash = SHA256.hash(data: Data((salt + password).utf8)).compactMap { String(format: "%02x", $0) }.joined()
+        folderSalts[folderId] = salt
         folderPasswords[folderId] = hash
         folderPasswordHints[folderId] = hint
         folderFailedAttempts[folderId] = 0
@@ -267,6 +359,7 @@ final class AppState {
     /// 移除文件夹密码
     func removeFolderPassword(_ folderId: String) {
         folderPasswords.removeValue(forKey: folderId)
+        folderSalts.removeValue(forKey: folderId)
         folderPasswordHints.removeValue(forKey: folderId)
         folderFailedAttempts.removeValue(forKey: folderId)
         unlockedFolders.remove(folderId)
@@ -277,10 +370,16 @@ final class AppState {
         saveData()
     }
 
+    /// 验证密码（带盐值）
+    private func hashPassword(_ password: String, salt: String) -> String {
+        SHA256.hash(data: Data((salt + password).utf8)).compactMap { String(format: "%02x", $0) }.joined()
+    }
+
     /// 仅验证密码（不关闭弹窗，用于修改密码时的第一步验证）
     func checkFolderPassword(_ folderId: String, password: String) -> Bool {
-        let hash = SHA256.hash(data: Data(password.utf8)).compactMap { String(format: "%02x", $0) }.joined()
         guard let storedHash = folderPasswords[folderId] else { return false }
+        let salt = folderSalts[folderId] ?? ""
+        let hash = hashPassword(password, salt: salt)
 
         if hash == storedHash {
             folderFailedAttempts[folderId] = 0
@@ -298,10 +397,11 @@ final class AppState {
         }
     }
 
-    /// 尝试验证密码
+    /// 尝试验证密码（带盐值）
     func verifyFolderPassword(_ folderId: String, password: String) -> Bool {
-        let hash = SHA256.hash(data: Data(password.utf8)).compactMap { String(format: "%02x", $0) }.joined()
         guard let storedHash = folderPasswords[folderId] else { return false }
+        let salt = folderSalts[folderId] ?? ""
+        let hash = hashPassword(password, salt: salt)
 
         if hash == storedHash {
             unlockedFolders.insert(folderId)
@@ -472,36 +572,71 @@ final class AppState {
         }
     }
 
-    /// 从本地迁移到 iCloud
+    /// 原子化迁移到 iCloud（先复制到临时目录，再批量移动）
     private func migrateToICloud() {
         guard let iCloudURL = Self.iCloudDriveURL else { iCloudEnabled = false; return }
         let fm = FileManager.default
-        try? fm.createDirectory(at: iCloudURL, withIntermediateDirectories: true)
+        let fileNames = ["notes.json", "folders.json", "themes.json", "prefs.json", "lock.json"]
+        let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("noto-migrate-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: tmpDir) }
 
-        for name in ["notes.json", "folders.json", "themes.json", "prefs.json", "lock.json"] {
-            let local = Self.appSupportDir.appendingPathComponent(name)
-            let remote = iCloudURL.appendingPathComponent(name)
-            if fm.fileExists(atPath: local.path) {
-                try? fm.copyItem(at: local, to: remote)
-                try? fm.removeItem(at: local)
+        // Step 1: 复制到临时目录
+        try? fm.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        for name in fileNames {
+            let src = Self.appSupportDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) {
+                try? fm.copyItem(at: src, to: tmpDir.appendingPathComponent(name))
             }
+        }
+
+        // Step 2: 移动到目标（目标存在则先删除）
+        try? fm.createDirectory(at: iCloudURL, withIntermediateDirectories: true)
+        for name in fileNames {
+            let tmpFile = tmpDir.appendingPathComponent(name)
+            let dest = iCloudURL.appendingPathComponent(name)
+            if fm.fileExists(atPath: tmpFile.path) {
+                if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                try? fm.moveItem(at: tmpFile, to: dest)
+            }
+        }
+
+        // Step 3: 删除本地源文件
+        for name in fileNames {
+            let src = Self.appSupportDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) { try? fm.removeItem(at: src) }
         }
         saveData()
     }
 
-    /// 从 iCloud 迁回本地
+    /// 从 iCloud 迁回本地（原子化）
     private func migrateFromICloud() {
         guard let iCloudURL = Self.iCloudDriveURL else { return }
         let fm = FileManager.default
-        try? fm.createDirectory(at: Self.appSupportDir, withIntermediateDirectories: true)
+        let fileNames = ["notes.json", "folders.json", "themes.json", "prefs.json", "lock.json"]
+        let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("noto-migrate-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: tmpDir) }
 
-        for name in ["notes.json", "folders.json", "themes.json", "prefs.json", "lock.json"] {
-            let remote = iCloudURL.appendingPathComponent(name)
-            let local = Self.appSupportDir.appendingPathComponent(name)
-            if fm.fileExists(atPath: remote.path) {
-                try? fm.copyItem(at: remote, to: local)
-                try? fm.removeItem(at: remote)
+        try? fm.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        for name in fileNames {
+            let src = iCloudURL.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) {
+                try? fm.copyItem(at: src, to: tmpDir.appendingPathComponent(name))
             }
+        }
+
+        try? fm.createDirectory(at: Self.appSupportDir, withIntermediateDirectories: true)
+        for name in fileNames {
+            let tmpFile = tmpDir.appendingPathComponent(name)
+            let dest = Self.appSupportDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: tmpFile.path) {
+                if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                try? fm.moveItem(at: tmpFile, to: dest)
+            }
+        }
+
+        for name in fileNames {
+            let src = iCloudURL.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) { try? fm.removeItem(at: src) }
         }
         saveData()
     }
@@ -542,6 +677,9 @@ final class AppState {
             let prefs: [String: AnyCodable] = [
                 "selectedThemeId": AnyCodable(selectedThemeId),
                 "sidebarWidth": AnyCodable(sidebarWidth),
+                "noteListWidth": AnyCodable(noteListWidth),
+                "sortOption": AnyCodable(sortOption.rawValue),
+                "trashRetentionDays": AnyCodable(Double(trashRetentionDays)),
                 "darkModePreference": AnyCodable(darkModePreference.rawValue),
             ]
             let prefsData = try encoder.encode(prefs)
@@ -549,6 +687,7 @@ final class AppState {
 
             let lockData = FolderLockData(
                 folderPasswords: folderPasswords,
+                folderSalts: folderSalts,
                 folderPasswordHints: folderPasswordHints,
                 folderFailedAttempts: folderFailedAttempts
             )
@@ -559,9 +698,8 @@ final class AppState {
         }
     }
 
-    private func loadData() {
+    private func loadData(from dir: URL) {
         let decoder = JSONDecoder()
-        let dir = Self.currentStorageDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         if let data = try? Data(contentsOf: dir.appendingPathComponent("notes.json")) {
@@ -577,22 +715,19 @@ final class AppState {
             if let prefs = try? decoder.decode([String: AnyCodable].self, from: data) {
                 if case .string(let tid) = prefs["selectedThemeId"] { selectedThemeId = tid }
                 if case .double(let sw) = prefs["sidebarWidth"] { sidebarWidth = sw }
+                if case .double(let nw) = prefs["noteListWidth"] { noteListWidth = nw }
+                if case .string(let so) = prefs["sortOption"], let opt = SortOption(rawValue: so) { sortOption = opt }
+                if case .double(let td) = prefs["trashRetentionDays"] { trashRetentionDays = Int(td) }
                 if case .string(let dm) = prefs["darkModePreference"] { darkModePreference = DarkModePreference(rawValue: dm) ?? .system }
             }
         }
         if let lockData = try? Data(contentsOf: dir.appendingPathComponent("lock.json")) {
             if let decoded = try? decoder.decode(FolderLockData.self, from: lockData) {
                 folderPasswords = decoded.folderPasswords
+                folderSalts = decoded.folderSalts
                 folderPasswordHints = decoded.folderPasswordHints
                 folderFailedAttempts = decoded.folderFailedAttempts
             }
-        }
-
-        // 检查 iCloud Drive 是否有现有数据（首次启动时自动检测）
-        if notes.isEmpty, folders.isEmpty,
-           let iCloudURL = Self.iCloudDriveURL,
-           FileManager.default.fileExists(atPath: iCloudURL.appendingPathComponent("notes.json").path) {
-            iCloudEnabled = true
         }
     }
     private static let appSupportDir: URL = {
@@ -604,6 +739,7 @@ final class AppState {
 // MARK: - 密码存储模型
 struct FolderLockData: Codable {
     var folderPasswords: [String: String] = [:]
+    var folderSalts: [String: String] = [:]
     var folderPasswordHints: [String: String] = [:]
     var folderFailedAttempts: [String: Int] = [:]
 }

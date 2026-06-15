@@ -49,7 +49,6 @@ struct Folder: Identifiable, Codable, Hashable {
     var passwordHint: String = ""
 
     static let defaultFolders: [Folder] = [
-        Folder(name: "全部笔记", icon: "tray.full", sortOrder: -2),
         Folder(name: "快速笔记", icon: "note.text", sortOrder: -1),
         Folder(name: "工作", icon: "briefcase", sortOrder: 0),
         Folder(name: "个人", icon: "person", sortOrder: 1),

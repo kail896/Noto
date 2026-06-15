@@ -9,10 +9,10 @@ struct ContentView: View {
 
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: state.sidebarWidth, max: 300)
+                .navigationSplitViewColumnWidth(min: 150, ideal: state.sidebarWidth, max: 350)
         } content: {
             NoteListView()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 400)
+                .navigationSplitViewColumnWidth(min: 200, ideal: state.noteListWidth, max: 500)
         } detail: {
             NoteEditorView()
         }
@@ -45,7 +45,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { state.createNote() } }) {
+                Button(action: { withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.85)) { state.createNote() } }) {
                     Label("新建笔记", systemImage: "square.and.pencil")
                 }
                 .help("新建笔记 (Cmd+N)")
@@ -85,6 +85,7 @@ struct ContentView: View {
     }
 
     private func applyAppearance() {
+        // Appearance handled by .preferredColorScheme() above
         let isDark: Bool = {
             switch state.darkModePreference {
             case .dark: return true

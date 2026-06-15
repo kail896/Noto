@@ -98,6 +98,27 @@ struct SettingsView: View {
                     state.emptyTrash()
                 }
                 .disabled(state.trashCount == 0)
+
+                HStack {
+                    Text("自动清理天数")
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { state.trashRetentionDays },
+                        set: { state.trashRetentionDays = $0; state.saveData(); state.cleanupTrash() }
+                    )) {
+                        Text("7 天").tag(7)
+                        Text("15 天").tag(15)
+                        Text("30 天").tag(30)
+                        Text("60 天").tag(60)
+                        Text("90 天").tag(90)
+                        Text("不自动删除").tag(0)
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+                Text("超过设定天数的已删除笔记将被彻底清除")
+                    .font(.caption)
+                    .foregroundColor(state.currentTheme.secondaryTextColorSwift)
             }
 
             Section("外观") {

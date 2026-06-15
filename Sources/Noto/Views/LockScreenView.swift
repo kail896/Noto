@@ -1,4 +1,5 @@
 import SwiftUI
+import LocalAuthentication
 
 // MARK: - 密码锁界面（解锁 & 设置密码共用）
 struct LockScreenView: View {
@@ -9,6 +10,7 @@ struct LockScreenView: View {
     @State private var confirmPassword: String = ""
     @State private var passwordHint: String = ""
     @State private var oldPasswordVerified: Bool = false  // 修改密码时：旧密码已验证
+    @State private var isAuthenticating: Bool = false  // 指纹验证中
 
     enum LockMode {
         case unlock        // 解锁已有密码的文件夹
@@ -89,6 +91,15 @@ struct LockScreenView: View {
                 }
                 .keyboardShortcut(.escape)
 
+                if mode == .unlock && isBiometricAvailable {
+                    Button(action: authenticateWithBiometrics) {
+                        Label("指纹解锁", systemImage: "touchid")
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isAuthenticating)
+                }
+
                 Button(action: submit) {
                     Text(buttonText)
                         .padding(.horizontal, 24)
@@ -97,6 +108,7 @@ struct LockScreenView: View {
                 .tint(state.currentTheme.accentColorSwift)
                 .disabled(isSubmitDisabled)
             }
+            .frame(minHeight: 32)
 
             Spacer()
         }
@@ -182,6 +194,39 @@ struct LockScreenView: View {
                 resetState()
             }
         }
+    }
+
+    // MARK: - 生物识别（Touch ID / Face ID）
+    private var isBiometricAvailable: Bool {
+        let context = LAContext()
+        var error: NSError?
+        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+    }
+
+    private func authenticateWithBiometrics() {
+        let context = LAContext()
+        context.localizedReason = "解锁加密文件夹"
+        isAuthenticating = true
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "使用指纹解锁「\(folderName)」文件夹") { success, error in
+            DispatchQueue.main.async {
+                isAuthenticating = false
+                if success {
+                    // 生物识别通过 → 直接解锁
+                    state.unlockedFolders.insert(folderId)
+                    state.folderFailedAttempts[folderId] = 0
+                    state.passwordErrorMessage = nil
+                    state.showLockScreen = false
+                    state.pendingLockFolderId = nil
+                    resetState()
+                } else if let laError = error as? LAError, laError.code != .userCancel {
+                    state.passwordErrorMessage = "指纹验证失败，请使用密码解锁"
+                }
+            }
+        }
+    }
+
+    private var folderName: String {
+        state.folders.first(where: { $0.id.uuidString == folderId })?.name ?? ""
     }
 
     private func resetState() {

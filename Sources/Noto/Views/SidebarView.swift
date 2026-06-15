@@ -47,6 +47,8 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
+        .animation(.easeInOut(duration: 0.15), value: state.selectedSmartFolder)
+        .animation(.easeInOut(duration: 0.15), value: state.selectedFolderId)
         .background(state.currentTheme.sidebarBgColorSwift)
         .foregroundColor(state.currentTheme.textColorSwift)
         .searchable(text: searchBinding, placement: .sidebar, prompt: "搜索笔记...")
@@ -191,17 +193,42 @@ struct SidebarView: View {
 
     private func smartRow(smart: SmartFolder) -> some View {
         smartFolderRow(smart)
+            .listRowInsets(EdgeInsets())
             .listRowBackground(selectedBG(isSelected: state.selectedSmartFolder == smart))
             .contentShape(Rectangle())
-            .onTapGesture { selectSmart(smart) }
+            .simultaneousGesture(TapGesture().onEnded { selectSmart(smart) })
+            .contextMenu {
+                Button("新建笔记", systemImage: "square.and.pencil") {
+                    withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.85)) {
+                        state.createNote()
+                    }
+                }
+                if smart == .trash {
+                    Divider()
+                    Button("清空最近删除", systemImage: "trash.slash", role: .destructive) {
+                        state.emptyTrash()
+                    }
+                }
+            }
     }
 
     private func folderRowView(folder: Folder) -> some View {
         folderRow(folder)
+            .listRowInsets(EdgeInsets())
             .listRowBackground(selectedBG(isSelected: state.selectedFolderId == folder.id))
             .contentShape(Rectangle())
-            .onTapGesture { selectFolder(folder) }
+            .simultaneousGesture(TapGesture().onEnded { selectFolder(folder) })
             .contextMenu {
+                Button("新建笔记", systemImage: "square.and.pencil") {
+                    state.selectedFolderId = folder.id
+                    state.selectedSmartFolder = nil
+                    state.selectedNoteId = nil
+                    state.editingNote = nil
+                    withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.85)) {
+                        state.createNote(in: folder.id)
+                    }
+                }
+                Divider()
                 Button("重命名") { renameFolder(folder) }
                 if folder.isLocked && state.isFolderUnlocked(folder.id.uuidString) {
                     Button("锁定", systemImage: "lock") { state.lockFolder(folder.id.uuidString) }
@@ -234,7 +261,7 @@ struct SidebarView: View {
                     }
                 }
                 Divider()
-                Button("删除文件夹", role: .destructive) {
+                Button("删除文件夹", systemImage: "trash", role: .destructive) {
                     showDeleteConfirm = folder
                 }
             }
@@ -253,10 +280,12 @@ struct SidebarView: View {
             state.isSettingPassword = false
             return
         }
-        state.selectedFolderId = folder.id
-        state.selectedSmartFolder = nil
-        state.selectedNoteId = nil
-        state.editingNote = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            state.selectedFolderId = folder.id
+            state.selectedSmartFolder = nil
+            state.selectedNoteId = nil
+            state.editingNote = nil
+        }
     }
 
     // MARK: - Smart Folder Row

@@ -128,6 +128,10 @@ else
     exit 1
 fi
 
+# 最终 DMG 放在项目根目录
+cp "$DMG_PATH" "$SCRIPT_DIR/$PRODUCT_NAME.dmg"
+echo -e "${GREEN}  ✅ Final DMG: $SCRIPT_DIR/$PRODUCT_NAME.dmg${NC}"
+
 # Summary
 echo -e "\n${BLUE}══════════════════════════════════${NC}"
 echo -e "${GREEN}  ✅ Build Complete!${NC}"
