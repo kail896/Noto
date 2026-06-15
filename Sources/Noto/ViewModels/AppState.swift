@@ -229,18 +229,6 @@ final class AppState {
         saveData()
     }
 
-    func updateNote(_ note: Note) {
-        if let idx = notes.firstIndex(where: { $0.id == note.id }) {
-            var updated = note
-            updated.updatedAt = Date()
-            notes[idx] = updated
-            if editingNote?.id == note.id {
-                editingNote = updated
-            }
-            saveData()
-        }
-    }
-
     func deleteNote(_ note: Note) {
         if let idx = notes.firstIndex(where: { $0.id == note.id }) {
             notes[idx].isDeleted = true

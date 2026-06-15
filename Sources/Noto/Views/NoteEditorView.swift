@@ -33,8 +33,8 @@ struct NoteEditorView: View {
         .onChange(of: state.selectedNoteId) { _, newId in
             // 触发抽屉滑入动画：先将内容推到左侧
             slideOffset = -200
-            // 后台保存当前内容
-            saveCurrentContentAsync()
+            // 保存当前内容
+            saveCurrentContent()
             // 后台加载新笔记内容
             if let id = newId, let note = state.notes.first(where: { $0.id == id }) {
                 isLoadingContent = true
@@ -715,20 +715,11 @@ struct NoteEditorView: View {
         isLoadingContent = false
     }
 
-    private func loadNoteContent(_ note: Note) {
-        // 直接调用异步版本
-        loadContentAsync(note)
-    }
-
     private func autoSave(note: Note) {
-        saveCurrentContentAsync()
-    }
-
-    /// 异步保存 — 省去背景线程转换的复杂性，直接在主线程完成
-    private func saveCurrentContentAsync() {
         saveCurrentContent()
     }
 
+    /// 异步保存 — 省去背景线程转换的复杂性，直接在主线程完成
     private func saveCurrentContent() {
         guard isEditing, let currentNote = state.editingNote else { return }
         savingNoteId = currentNote.id

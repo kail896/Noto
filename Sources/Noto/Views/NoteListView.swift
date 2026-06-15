@@ -521,8 +521,6 @@ struct NSTableViewSelectionFix: NSViewRepresentable {
         return view
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    class Coordinator {}
 }
 
 /// 自定义 NSView：高频禁用所有 NSTableView 的选中高亮和聚焦环
