@@ -228,6 +228,18 @@ struct NoteEditorView: View {
                 toolButton("eraser", help: "清除格式") { clearFormatting() }
 
                 Spacer(minLength: 4)
+
+                // 保存按钮
+                Button(action: { saveCurrentContent(); state.saveData() }) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 30, height: 26)
+                        .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("保存笔记 (Cmd+S)")
+                .keyboardShortcut("s")
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
