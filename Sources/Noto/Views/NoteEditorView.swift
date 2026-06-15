@@ -277,6 +277,7 @@ struct NoteEditorView: View {
         if let newFont = NSFont(descriptor: newDesc, size: font.pointSize) {
             tv.font = newFont
         }
+        autoSave(note: state.editingNote ?? Note.empty())
     }
 
     private func toggleItalic() {
@@ -290,6 +291,7 @@ struct NoteEditorView: View {
         if let newFont = NSFont(descriptor: newDesc, size: font.pointSize) {
             tv.font = newFont
         }
+        saveAfterFormatting()
     }
 
     private func toggleUnderline() {
@@ -305,6 +307,7 @@ struct NoteEditorView: View {
             storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
         }
         storage.endEditing()
+        saveAfterFormatting()
     }
 
     private func toggleStrikethrough() {
@@ -320,6 +323,7 @@ struct NoteEditorView: View {
             storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: selectedRange)
         }
         storage.endEditing()
+        saveAfterFormatting()
     }
 
     // MARK: - Color Picker
@@ -469,6 +473,7 @@ struct NoteEditorView: View {
 
     private func setAlignment(_ alignment: NSTextAlignment) {
         findFirstResponderTextView()?.alignment = alignment
+        saveAfterFormatting()
     }
 
     private func toggleLineSpacing() {
@@ -498,7 +503,8 @@ struct NoteEditorView: View {
             text.addAttribute(.paragraphStyle, value: para, range: rng)
         }
         text.endEditing()
-    }
+            saveAfterFormatting()
+}
 
     private func adjustIndent(increase: Bool) {
         guard let tv = findFirstResponderTextView() else { return }
@@ -562,6 +568,7 @@ struct NoteEditorView: View {
         let range = tv.selectedRange()
         guard range.length > 0 else { return }
         tv.textStorage?.addAttribute(.foregroundColor, value: color, range: range)
+        saveAfterFormatting()
     }
 
     private func toggleHighlight(color: NSColor = .systemYellow) {
@@ -583,7 +590,8 @@ struct NoteEditorView: View {
             storage.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.3), range: range)
         }
         storage.endEditing()
-    }
+            saveAfterFormatting()
+}
 
     private func toggleQuoteBlock() {
         guard let tv = findFirstResponderTextView() else { return }
@@ -613,7 +621,8 @@ struct NoteEditorView: View {
             }
         }
         tv.textStorage?.endEditing()
-    }
+            saveAfterFormatting()
+}
 
     private func insertLink(url: String, text: String) {
         guard let tv = findFirstResponderTextView() else { return }
@@ -662,7 +671,8 @@ struct NoteEditorView: View {
             storage.addAttribute(.backgroundColor, value: bgColor, range: range)
         }
         storage.endEditing()
-    }
+            saveAfterFormatting()
+}
 
     private func insertImage() {
         // 在弹窗前保存 NSTextView 引用（弹窗期间它会失去第一响应者状态）
@@ -698,6 +708,24 @@ struct NoteEditorView: View {
         }
     }
 
+    /// 格式修改后保存内容
+    private func saveAfterFormatting() {
+        guard let note = state.editingNote else { return }
+        // 更新 editorContent 为当前 NSTextView 的实际内容（包含格式修改）
+        if let tv = findFirstResponderTextView() {
+            editorContent = tv.attributedString()
+        }
+        // 直接保存到 notes 数组（绕过 isEditing 检查，因为格式修改不触发 textDidChange）
+        if let idx = state.notes.firstIndex(where: { $0.id == note.id }) {
+            state.notes[idx].plainText = editorContent.string
+            state.notes[idx].updatedAt = Date()
+            // 实时保存 HTML 和磁盘
+            let htmlData = try? editorContent.data(from: .init(location: 0, length: editorContent.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+            state.notes[idx].content = htmlData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        }
+        state.saveData()
+    }
+
     private func clearFormatting() {
         guard let tv = findFirstResponderTextView() else { return }
         let range = tv.selectedRange()
@@ -710,6 +738,7 @@ struct NoteEditorView: View {
             .foregroundColor: NSColor.textColor
         ])
         tv.textStorage?.replaceCharacters(in: range, with: plainAttr)
+        saveAfterFormatting()
     }
 
     private func toggleFontSize(increase: Bool) {
@@ -732,6 +761,7 @@ struct NoteEditorView: View {
         } else {
             textView.replaceCharacters(in: lineRange, with: "\u{2022} \(line)")
         }
+        saveAfterFormatting()
     }
 
     private func toggleNumberedList() {
@@ -747,6 +777,7 @@ struct NoteEditorView: View {
         } else {
             textView.replaceCharacters(in: lineRange, with: "1. \(line)")
         }
+        saveAfterFormatting()
     }
 
     private func findFirstResponderTextView() -> NSTextView? {
