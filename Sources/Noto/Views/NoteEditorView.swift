@@ -719,9 +719,9 @@ struct NoteEditorView: View {
         if let idx = state.notes.firstIndex(where: { $0.id == note.id }) {
             state.notes[idx].plainText = editorContent.string
             state.notes[idx].updatedAt = Date()
-            // 实时保存 HTML 和磁盘
-            let htmlData = try? editorContent.data(from: .init(location: 0, length: editorContent.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
-            state.notes[idx].content = htmlData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            // 使用 RTF 保存（保留行距、段落样式等全部属性，HTML 不支持行距）
+            let rtfData = try? editorContent.data(from: .init(location: 0, length: editorContent.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+            state.notes[idx].content = rtfData.flatMap { $0.base64EncodedString() } ?? ""
         }
         state.saveData()
     }
@@ -731,11 +731,14 @@ struct NoteEditorView: View {
         let range = tv.selectedRange()
         guard range.length > 0 else { return }
 
-        // Keep the plain text, remove all attributes
+        // Keep the plain text, remove all attributes（使用主题字体配置，确保保存后加载一致）
         let plainText = (tv.string as NSString).substring(with: range)
+        let themeFont = NSFont(name: state.currentTheme.fontConfiguration.family, size: state.currentTheme.fontConfiguration.size)
+            ?? NSFont.systemFont(ofSize: state.currentTheme.fontConfiguration.size)
         let plainAttr = NSAttributedString(string: plainText, attributes: [
-            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
-            .foregroundColor: NSColor.textColor
+            .font: themeFont,
+            .foregroundColor: NSColor.textColor,
+            .paragraphStyle: NSParagraphStyle.default
         ])
         tv.textStorage?.replaceCharacters(in: range, with: plainAttr)
         saveAfterFormatting()
@@ -794,7 +797,17 @@ struct NoteEditorView: View {
             return
         }
 
-        if let data = note.content.data(using: .utf8),
+        // 尝试 RTF（base64编码）
+        if let rtfData = Data(base64Encoded: note.content),
+           rtfData.count > 0,
+           let parsed = try? NSAttributedString(
+            data: rtfData,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+           ) {
+            editorContent = parsed
+        // 兼容旧版 HTML 格式
+        } else if let data = note.content.data(using: .utf8),
            data.count > 0,
            let parsed = try? NSAttributedString(
             data: data,
@@ -817,14 +830,14 @@ struct NoteEditorView: View {
         guard isEditing, let currentNote = state.editingNote else { return }
         savingNoteId = currentNote.id
 
-        let htmlData = try? editorContent.data(
+        let rtfData = try? editorContent.data(
             from: .init(location: 0, length: editorContent.length),
-            documentAttributes: [.documentType: NSAttributedString.DocumentType.html]
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
         )
-        let htmlString = htmlData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let contentString = rtfData.flatMap { $0.base64EncodedString() } ?? ""
 
         var updatedNote = currentNote
-        updatedNote.content = htmlString
+        updatedNote.content = contentString
         updatedNote.plainText = editorContent.string
         updatedNote.updatedAt = Date()
 
