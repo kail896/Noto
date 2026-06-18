@@ -145,7 +145,7 @@ struct SettingsView: View {
             Text("Noto")
                 .font(.system(size: 24, weight: .bold))
 
-            Text("版本 1.0.0")
+            Text("版本 1.1.2")
                 .font(.callout)
                 .foregroundColor(state.currentTheme.secondaryTextColorSwift)
 
