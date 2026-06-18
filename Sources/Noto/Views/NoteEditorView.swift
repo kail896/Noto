@@ -182,14 +182,6 @@ struct NoteEditorView: View {
         VStack(spacing: 0) {
             // ── 第一行：文字样式 + 对齐 + 字号 + 列表 ──
             HStack(spacing: 1) {
-                // 文字样式
-                formatButton("bold", help: "粗体", isActive: formatState.isBold) { toggleBold() }
-                formatButton("italic", help: "斜体", isActive: formatState.isItalic) { toggleItalic() }
-                formatButton("underline", help: "下划线", isActive: formatState.isUnderline) { toggleUnderline() }
-                formatButton("strikethrough", help: "删除线", isActive: formatState.isStrikethrough) { toggleStrikethrough() }
-
-                Divider().frame(height: 18).padding(.horizontal, 3)
-
                 // 对齐
                 toolButton("text.alignleft", help: "左对齐") { setAlignment(.left) }
                 toolButton("text.aligncenter", help: "居中") { setAlignment(.center) }
@@ -245,8 +237,6 @@ struct NoteEditorView: View {
             // ── 第二行：颜色 + 高亮 + 引用 + 链接 + 代码 + 图片 + 分割线 + 清除格式 ──
             HStack(spacing: 1) {
                 toolButton("text.quote", help: "引用块") { toggleQuoteBlock() }
-                colorButton
-                highlightButton
 
                 Divider().frame(height: 18).padding(.horizontal, 3)
 
