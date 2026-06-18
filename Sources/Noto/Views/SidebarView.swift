@@ -44,11 +44,61 @@ struct SidebarView: View {
                     .help("新建文件夹")
                 }
             }
+
+            // 标签
+            if !state.allTags.isEmpty {
+                Section {
+                    ForEach(state.allTags, id: \.self) { tag in
+                        HStack(spacing: 10) {
+                            Image(systemName: "tag")
+                                .font(.system(size: 11))
+                                .foregroundColor(state.currentTheme.accentColorSwift)
+                                .frame(width: 18)
+
+                            Text(tag)
+                                .font(.system(size: 13, weight: .medium))
+
+                            Spacer()
+
+                            let count = state.notes.filter { $0.tags.contains(tag) && !$0.isDeleted }.count
+                            Text("\(count)")
+                                .font(.caption2)
+                                .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(state.currentTheme.secondaryTextColorSwift.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                        .padding(.vertical, 3)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(selectedBG(isSelected: state.selectedTag == tag))
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(TapGesture().onEnded {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                if state.selectedTag == tag {
+                                    state.selectedTag = nil
+                                } else {
+                                    state.selectedTag = tag
+                                    state.selectedSmartFolder = .all
+                                    state.selectedFolderId = nil
+                                    state.selectedNoteId = nil
+                                    state.editingNote = nil
+                                }
+                            }
+                        })
+                    }
+                } header: {
+                    Label("标签", systemImage: "tag")
+                        .font(.caption)
+                        .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                }
+            }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .animation(.easeInOut(duration: 0.15), value: state.selectedSmartFolder)
         .animation(.easeInOut(duration: 0.15), value: state.selectedFolderId)
+        .animation(.easeInOut(duration: 0.15), value: state.selectedTag)
         .background(state.currentTheme.sidebarBgColorSwift)
         .foregroundColor(state.currentTheme.textColorSwift)
         .searchable(text: searchBinding, placement: .sidebar, prompt: "搜索笔记...")
@@ -189,6 +239,7 @@ struct SidebarView: View {
         state.selectedFolderId = nil
         state.selectedNoteId = nil
         state.editingNote = nil
+        state.selectedTag = nil
     }
 
     private func smartRow(smart: SmartFolder) -> some View {
@@ -274,6 +325,7 @@ struct SidebarView: View {
             state.selectedSmartFolder = nil
             state.selectedNoteId = nil
             state.editingNote = nil
+            state.selectedTag = nil
             state.pendingLockFolderId = folder.id.uuidString
             state.passwordErrorMessage = nil
             state.showLockScreen = true
@@ -285,6 +337,7 @@ struct SidebarView: View {
             state.selectedSmartFolder = nil
             state.selectedNoteId = nil
             state.editingNote = nil
+            state.selectedTag = nil
         }
     }
 

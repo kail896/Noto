@@ -14,6 +14,7 @@ struct Note: Identifiable, Codable, Hashable {
     var themeId: String?
     var isDeleted: Bool = false
     var deletedAt: Date?
+    var tags: [String] = []
 
     var previewText: String {
         let trimmed = plainText.trimmingCharacters(in: .whitespacesAndNewlines)

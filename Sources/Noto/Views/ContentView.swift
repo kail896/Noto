@@ -64,38 +64,27 @@ struct ContentView: View {
                 .help("设置")
             }
         }
+        .onChange(of: state.currentTheme.isDark) { _, newVal in
+            NSApp.appearance = newVal
+                ? NSAppearance(named: .darkAqua)
+                : NSAppearance(named: .aqua)
+        }
         .onAppear {
-            applyAppearance()
-        }
-        .onChange(of: state.darkModePreference) { _, _ in
-            applyAppearance()
-        }
-        .onChange(of: state.currentTheme.isDark) { _, _ in
-            applyAppearance()
-        }
-    }
-
-    /// 根据暗色模式偏好计算 ColorScheme
-    private var colorSchemePreference: ColorScheme? {
-        switch state.darkModePreference {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
-        }
-    }
-
-    private func applyAppearance() {
-        // Appearance handled by .preferredColorScheme() above
-        let isDark: Bool = {
-            switch state.darkModePreference {
-            case .dark: return true
-            case .light: return false
-            case .system: return state.currentTheme.isDark
+            // 监听系统外观变化，更新跟随系统主题
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+                object: nil, queue: .main
+            ) { [weak state] _ in
+                if state?.selectedThemeId == "system-auto" {
+                    state?.appearanceVersion += 1
+                }
             }
-        }()
-        NSApp.appearance = isDark
-            ? NSAppearance(named: .darkAqua)
-            : NSAppearance(named: .aqua)
+        }
+    }
+
+    /// 主题的 isDark 决定颜色方案（不再使用单独的 darkModePreference）
+    private var colorSchemePreference: ColorScheme? {
+        state.currentTheme.isDark ? .dark : .light
     }
 
 }

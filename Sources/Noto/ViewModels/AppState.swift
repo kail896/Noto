@@ -5,6 +5,7 @@ import CryptoKit
 
 // MARK: - 排序选项
 enum SortOption: String, Codable, CaseIterable, Identifiable {
+    case custom = "custom"
     case updatedAt = "updatedAt"
     case createdAt = "createdAt"
     case title = "title"
@@ -12,6 +13,7 @@ enum SortOption: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
+        case .custom: return "手动"
         case .updatedAt: return "编辑时间"
         case .createdAt: return "创建时间"
         case .title: return "标题"
@@ -19,6 +21,7 @@ enum SortOption: String, Codable, CaseIterable, Identifiable {
     }
     var icon: String {
         switch self {
+        case .custom: return "hand.point.up"
         case .updatedAt: return "clock"
         case .createdAt: return "calendar.badge.plus"
         case .title: return "textformat.abc"
@@ -62,9 +65,18 @@ final class AppState {
     var noteListWidth: CGFloat = 260
     var sortOption: SortOption = .updatedAt
     var trashRetentionDays: Int = 30  // 最近删除保留天数
+    var selectedTag: String? = nil
+    var saveStatusMessage: String? = nil
+    var appearanceVersion: Int = 0
     var showThemeEditor: Bool = false
     var showSettings: Bool = false
     var showNoteMoveSheet: Bool = false
+
+    /// 所有笔记中使用的标签（去重排序）
+    var allTags: [String] {
+        let tags = Set(notes.flatMap { $0.tags })
+        return tags.sorted()
+    }
     var movingNoteId: UUID?
 
     // 主题
@@ -95,7 +107,8 @@ final class AppState {
 
     // 当前选中主题
     var currentTheme: NoteTheme {
-        allThemes.first(where: { $0.id == selectedThemeId }) ?? NoteTheme.lightDefault
+        let base = allThemes.first(where: { $0.id == selectedThemeId }) ?? NoteTheme.lightDefault
+        return NoteTheme.effectiveTheme(for: base)
     }
 
     var allThemes: [NoteTheme] {
@@ -104,7 +117,7 @@ final class AppState {
 
     // 筛选后的笔记
     var filteredNotes: [Note] {
-        let result: [Note]
+        var result: [Note]
         let activeNotes = visibleNotes
 
         if let smart = selectedSmartFolder {
@@ -127,6 +140,11 @@ final class AppState {
             result = activeNotes
         }
 
+        // 标签过滤
+        if let tag = selectedTag, !tag.isEmpty {
+            result = result.filter { $0.tags.contains(tag) }
+        }
+
         // 最终排序：置顶 > 选中的排序方式 > 在 notes 数组中的原始位置
         let notePositions: [UUID: Int] = {
             var pos: [UUID: Int] = [:]
@@ -138,6 +156,8 @@ final class AppState {
             if a.isPinned != b.isPinned { return a.isPinned }
             // 根据排序选项比较
             switch sortOption {
+            case .custom:
+                return (notePositions[a.id] ?? 0) < (notePositions[b.id] ?? 0)
             case .updatedAt:
                 if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
             case .createdAt:
@@ -146,7 +166,6 @@ final class AppState {
                 let cmp = a.title.localizedCompare(b.title)
                 if cmp != .orderedSame { return cmp == .orderedAscending }
             }
-            // 用 notes 数组中的索引作为最终排序依据（确保不跳动）
             return (notePositions[a.id] ?? 0) < (notePositions[b.id] ?? 0)
         }
 
@@ -648,16 +667,45 @@ final class AppState {
     }
 
     private func writeToDisk() {
+        let fm = FileManager.default
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         let dir = Self.currentStorageDir
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let backupDir = dir.appendingPathComponent("backups")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+
+        // 备份现有数据（只备份 notes.json 和 folders.json）
+        let dateStr = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let srcNotes = dir.appendingPathComponent("notes.json")
+        let srcFolders = dir.appendingPathComponent("folders.json")
+        if fm.fileExists(atPath: srcNotes.path) {
+            try? fm.copyItem(at: srcNotes, to: backupDir.appendingPathComponent("notes-\(dateStr).json"))
+        }
+        if fm.fileExists(atPath: srcFolders.path) {
+            try? fm.copyItem(at: srcFolders, to: backupDir.appendingPathComponent("folders-\(dateStr).json"))
+        }
+
+        // 清理旧备份（保留最近 20 个）
+        if let backups = try? fm.contentsOfDirectory(at: backupDir, includingPropertiesForKeys: [.creationDateKey]) {
+            let sorted = backups.sorted { a, b in
+                (try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast >
+                (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            }
+            if sorted.count > 40 { // 20 notes + 20 folders
+                for file in sorted.dropFirst(40) {
+                    try? fm.removeItem(at: file)
+                }
+            }
+        }
+
+        // 写入新数据
         do {
             let notesData = try encoder.encode(notes)
-            try notesData.write(to: dir.appendingPathComponent("notes.json"), options: .atomic)
+            try notesData.write(to: srcNotes, options: .atomic)
 
             let foldersData = try encoder.encode(folders)
-            try foldersData.write(to: dir.appendingPathComponent("folders.json"), options: .atomic)
+            try foldersData.write(to: srcFolders, options: .atomic)
 
             let themesData = try encoder.encode(customThemes)
             try themesData.write(to: dir.appendingPathComponent("themes.json"), options: .atomic)

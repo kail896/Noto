@@ -288,6 +288,33 @@ struct NoteListView: View {
     // MARK: - Note Card
     private func noteCard(_ note: Note) -> some View {
         HStack(spacing: 10) {
+            // 手动排序模式上下移动按钮
+            if state.sortOption == .custom && !state.isBatchMode {
+                VStack(spacing: 0) {
+                    Button {
+                        moveNote(note, direction: -1)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 8))
+                            .frame(width: 16, height: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                    .help("上移")
+
+                    Button {
+                        moveNote(note, direction: 1)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8))
+                            .frame(width: 16, height: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                    .help("下移")
+                }
+            }
+
             // 批量模式复选框
             if state.isBatchMode {
                 Button {
@@ -327,6 +354,25 @@ struct NoteListView: View {
                     .font(.system(size: 12))
                     .foregroundColor(state.currentTheme.secondaryTextColorSwift)
                     .lineLimit(2)
+
+                if !note.tags.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(note.tags.prefix(3), id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 9))
+                                .foregroundColor(state.currentTheme.accentColorSwift)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(state.currentTheme.accentColorSwift.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
+                        if note.tags.count > 3 {
+                            Text("+\(note.tags.count - 3)")
+                                .font(.system(size: 9))
+                                .foregroundColor(state.currentTheme.secondaryTextColorSwift)
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 8)
@@ -394,8 +440,87 @@ struct NoteListView: View {
                 state.showNoteMoveSheet = true
             },
             RightClickMenuItem2.separator(),
+            RightClickMenuItem2.separator(),
+            RightClickMenuItem2("导出为...", systemImage: "square.and.arrow.up") {
+                exportNote(note: note, state: state)
+            },
             RightClickMenuItem2("删除", systemImage: "trash", destructive: true) { state.deleteNote(note) },
         ]
+    }
+
+    static func exportNote(note: Note, state: AppState) {
+        let panel = NSSavePanel()
+        panel.title = "导出笔记"
+        panel.nameFieldStringValue = note.title.isEmpty ? "无标题" : note.title
+
+        // 格式选择
+        let alert = NSAlert()
+        alert.messageText = "选择导出格式"
+        alert.addButton(withTitle: "Markdown (.md)")
+        alert.addButton(withTitle: "纯文本 (.txt)")
+        alert.addButton(withTitle: "PDF")
+        alert.addButton(withTitle: "取消")
+        let response = alert.runModal()
+
+        guard response != .alertThirdButtonReturn else { return } // 取消
+
+        let btnMD = 1000, btnTXT = 1001, btnPDF = 1002
+        switch response {
+        case .alertFirstButtonReturn: // MD
+            panel.allowedContentTypes = [.plainText]
+            panel.nameFieldStringValue += ".md"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            let md = convertToMarkdown(note: note)
+            try? md.write(to: url, atomically: true, encoding: .utf8)
+
+        case .alertSecondButtonReturn: // TXT
+            panel.allowedContentTypes = [.plainText]
+            panel.nameFieldStringValue += ".txt"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            let text = note.plainText.isEmpty ? note.title : note.plainText
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+
+        case .alertThirdButtonReturn: // PDF
+            panel.allowedContentTypes = [.pdf]
+            panel.nameFieldStringValue += ".pdf"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            let pdfData = generatePDF(note: note)
+            try? pdfData?.write(to: url)
+
+        default:
+            break
+        }
+    }
+
+    private static func convertToMarkdown(note: Note) -> String {
+        var md = "# \(note.title)\n\n"
+        md += "> 创建: \(note.createdAt)  |  更新: \(note.updatedAt)\n\n"
+        md += "---\n\n"
+        md += note.plainText
+        return md
+    }
+
+    private static func generatePDF(note: Note) -> Data? {
+        let attrStr = NSMutableAttributedString()
+        let titleAttr: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 24)]
+        attrStr.append(NSAttributedString(string: note.title + "\n\n", attributes: titleAttr))
+        let bodyAttr: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12)]
+        attrStr.append(NSAttributedString(string: note.plainText, attributes: bodyAttr))
+
+        let printView = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        printView.textStorage?.setAttributedString(attrStr)
+        printView.sizeToFit()
+
+        let printInfo = NSPrintInfo.shared
+        printInfo.paperSize = NSSize(width: 612, height: 792)
+        printInfo.topMargin = 40
+        printInfo.leftMargin = 40
+        printInfo.rightMargin = 40
+        printInfo.bottomMargin = 40
+
+        let printOp = NSPrintOperation(view: printView, printInfo: printInfo)
+        let pdfData = printOp.view?.dataWithPDF(inside: printOp.view!.bounds)
+        return pdfData
     }
     // MARK: - Batch Actions (Trash)
     private func batchRestore() {
@@ -425,6 +550,14 @@ struct NoteListView: View {
     private func selectNote(_ note: Note) {
         state.selectedNoteId = note.id
         state.editingNote = note
+    }
+
+    private func moveNote(_ note: Note, direction: Int) {
+        guard let fromIdx = state.notes.firstIndex(where: { $0.id == note.id }) else { return }
+        let toIdx = fromIdx + direction
+        guard toIdx >= 0 && toIdx < state.notes.count else { return }
+        state.notes.swapAt(fromIdx, toIdx)
+        state.saveData()
     }
 }
 

@@ -30,11 +30,25 @@ struct NoteEditorView: View {
                 intensity: state.themeIntensity
             )
         }
-        .onChange(of: state.selectedNoteId) { _, newId in
+        .onChange(of: state.selectedNoteId) { oldId, newId in
             // 触发抽屉滑入动画：先将内容推到左侧
             slideOffset = -200
-            // 保存当前内容
-            saveCurrentContent()
+
+            // 从旧笔记切换到新笔记时，如果旧笔记是空笔记，自动删除
+            if let oldNoteId = oldId,
+               let idx = state.notes.firstIndex(where: { $0.id == oldNoteId }) {
+                let oldNote = state.notes[idx]
+                if (oldNote.title.isEmpty || oldNote.title == "新笔记"),
+                   oldNote.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    state.notes.remove(at: idx)
+                    state.saveData()
+                } else {
+                    saveCurrentContent()
+                }
+            } else {
+                saveCurrentContent()
+            }
+
             // 后台加载新笔记内容
             if let id = newId, let note = state.notes.first(where: { $0.id == id }) {
                 isLoadingContent = true
@@ -46,6 +60,9 @@ struct NoteEditorView: View {
                     }
                 }
             }
+        }
+        .onChange(of: state.searchText) { _, newText in
+            applySearchHighlight(text: newText)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
             saveCurrentContent()
@@ -111,12 +128,16 @@ struct NoteEditorView: View {
                             }
                         }
 
+                        // 标签
+                        TagsView(note: note, state: state)
+
                         Divider()
                             .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.3))
 
                         RichTextView(
                             attributedText: $editorContent,
                             theme: state.currentTheme,
+                            searchText: state.searchText,
                             onChange: {
                                 isEditing = true
                                 autoSave(note: note)
@@ -202,10 +223,21 @@ struct NoteEditorView: View {
                 Spacer(minLength: 4)
 
                 // 字数统计
-                Text("\(editorContent.length)")
+                let stats = textStats(editorContent.string)
+                Text("\(stats.chars)字 / \(stats.words)词 / \(stats.paras)段")
                     .font(.caption2)
                     .foregroundColor(state.currentTheme.secondaryTextColorSwift.opacity(0.5))
-                    .padding(.trailing, 6)
+                    .padding(.trailing, 4)
+                    .help("\(stats.chars) 字符 · \(stats.words) 单词 · \(stats.paras) 段落")
+
+                // 保存状态
+                if let status = state.saveStatusMessage {
+                    Text(status)
+                        .font(.caption2)
+                        .foregroundColor(.green.opacity(0.7))
+                        .transition(.opacity)
+                        .padding(.trailing, 6)
+                }
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
@@ -235,7 +267,11 @@ struct NoteEditorView: View {
                     help: "保存笔记 (Cmd+S)",
                     isActive: false,
                     accentColor: state.currentTheme.accentColorSwift,
-                    action: { saveCurrentContent(); state.saveData() }
+                    action: {
+                        saveCurrentContent()
+                        state.saveData()
+                        showSaveStatus()
+                    }
                 )
                 .keyboardShortcut("s")
             }
@@ -724,6 +760,14 @@ struct NoteEditorView: View {
             state.notes[idx].content = rtfData.flatMap { $0.base64EncodedString() } ?? ""
         }
         state.saveData()
+        showSaveStatus()
+    }
+
+    private func showSaveStatus() {
+        state.saveStatusMessage = "已保存"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak state] in
+            state?.saveStatusMessage = nil
+        }
     }
 
     private func clearFormatting() {
@@ -787,6 +831,46 @@ struct NoteEditorView: View {
         NSApp.keyWindow?.firstResponder as? NSTextView
     }
 
+    // MARK: - 文本统计
+    private func textStats(_ text: String) -> (chars: Int, words: Int, paras: Int) {
+        let chars = text.count
+        let paras = max(1, text.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words: Int
+        if trimmed.isEmpty {
+            words = 0
+        } else if trimmed.rangeOfCharacter(from: .whitespaces) != nil {
+            // 英文按空格分词
+            words = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        } else {
+            // 中文按字符分词
+            words = trimmed.filter { $0.isLetter || $0.isNumber }.count
+        }
+        return (chars, max(1, words), paras)
+    }
+
+    // MARK: - 搜索高亮
+    private func applySearchHighlight(text: String) {
+        guard let tv = findFirstResponderTextView(), let storage = tv.textStorage else { return }
+
+        // 清除旧高亮
+        let fullRange = NSRange(location: 0, length: storage.length)
+        storage.removeAttribute(.backgroundColor, range: fullRange)
+
+        if text.isEmpty || storage.length == 0 { return }
+
+        // 应用新高亮
+        let nsString = storage.string as NSString
+        var searchRange = NSRange(location: 0, length: nsString.length)
+        while searchRange.location < nsString.length {
+            let found = nsString.range(of: text, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+            if found.location == NSNotFound { break }
+            storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.3), range: found)
+            searchRange.location = found.location + found.length
+            searchRange.length = nsString.length - searchRange.location
+        }
+    }
+
     // MARK: - Load / Save
     /// 加载笔记内容
     private func loadContentAsync(_ note: Note) {
@@ -847,6 +931,7 @@ struct NoteEditorView: View {
         }
 
         isEditing = false
+        showSaveStatus()
         debounceSave()
     }
 
@@ -860,6 +945,65 @@ struct NoteEditorView: View {
         }
         saveWorkItem = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
+    }
+}
+
+// MARK: - 标签编辑组件
+struct TagsView: View {
+    let note: Note
+    let state: AppState
+    @State private var newTag: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(note.tags, id: \.self) { tag in
+                    HStack(spacing: 2) {
+                        Text(tag)
+                            .font(.caption2)
+                        Button {
+                            removeTag(tag)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(state.currentTheme.accentColorSwift.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+
+                // 添加标签
+                TextField("+ 标签", text: $newTag)
+                    .font(.caption2)
+                    .textFieldStyle(.plain)
+                    .frame(width: 60)
+                    .onSubmit {
+                        addTag()
+                    }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func addTag() {
+        let tag = newTag.trimmingCharacters(in: .whitespaces)
+        guard !tag.isEmpty, !note.tags.contains(tag) else { newTag = ""; return }
+        if let idx = state.notes.firstIndex(where: { $0.id == note.id }) {
+            state.notes[idx].tags.append(tag)
+            state.saveData()
+        }
+        newTag = ""
+    }
+
+    private func removeTag(_ tag: String) {
+        if let idx = state.notes.firstIndex(where: { $0.id == note.id }) {
+            state.notes[idx].tags.removeAll { $0 == tag }
+            state.saveData()
+        }
     }
 }
 
@@ -913,6 +1057,7 @@ struct FormatState: Equatable {
 struct RichTextView: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     let theme: NoteTheme
+    var searchText: String = ""
     let onChange: () -> Void
     var onSelectionChange: (FormatState) -> Void = { _ in }
 
@@ -970,6 +1115,19 @@ struct RichTextView: NSViewRepresentable {
             style.lineSpacing = (theme.fontConfiguration.lineSpacing - 1) * theme.fontConfiguration.size
             return style
         }()
+
+        // 搜索高亮
+        if !searchText.isEmpty, let storage = textView.textStorage, storage.length > 0 {
+            let nsString = storage.string as NSString
+            var searchRange = NSRange(location: 0, length: nsString.length)
+            while searchRange.location < nsString.length {
+                let found = nsString.range(of: searchText, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+                if found.location == NSNotFound { break }
+                storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.3), range: found)
+                searchRange.location = found.location + found.length
+                searchRange.length = nsString.length - searchRange.location
+            }
+        }
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {

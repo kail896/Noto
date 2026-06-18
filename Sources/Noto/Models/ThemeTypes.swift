@@ -192,7 +192,28 @@ struct NoteTheme: Codable, Identifiable, Hashable {
         cardColor: "#0F1F35"
     )
 
+    static let systemAuto = NoteTheme(
+        id: "system-auto",
+        name: "跟随系统",
+        backgroundColor: "#F5F5F7",
+        backgroundTexture: .none,
+        textColor: "#1D1D1F",
+        secondaryTextColor: "#86868B",
+        accentColor: "#007AFF",
+        fontConfiguration: .default,
+        isDark: false,
+        noteListBgColor: "#FFFFFF",
+        sidebarBgColor: "#F5F5F7",
+        cardColor: "#FFFFFF"
+    )
+
     static let defaultThemes: [NoteTheme] = [
-        .lightDefault, .darkDefault, .sepia, .midnight, .forest, .ocean
+        .systemAuto, .lightDefault, .darkDefault, .sepia, .midnight, .forest, .ocean
     ]
+
+    static func effectiveTheme(for base: NoteTheme) -> NoteTheme {
+        guard base.id == "system-auto" else { return base }
+        let isDark = NSApp.effectiveAppearance.name == .darkAqua || NSApp.effectiveAppearance.name == .vibrantDark
+        return isDark ? .darkDefault : .lightDefault
+    }
 }

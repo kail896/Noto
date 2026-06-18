@@ -41,6 +41,23 @@ struct NotoApp: App {
                 }
                 .keyboardShortcut(.delete)
                 .disabled(appState.editingNote == nil)
+
+                Divider()
+
+                Button("导出笔记...") {
+                    exportNote()
+                }
+                .keyboardShortcut("e")
+                .disabled(appState.editingNote == nil)
+
+                Button("打印...") {
+                    let printInfo = NSPrintInfo.shared
+                    if let window = NSApp.keyWindow {
+                        NSPrintOperation(view: window.contentView!, printInfo: printInfo).run()
+                    }
+                }
+                .keyboardShortcut("p")
+                .disabled(appState.editingNote == nil)
             }
 
             // 编辑菜单
@@ -54,6 +71,34 @@ struct NotoApp: App {
                     NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
                 }
                 .keyboardShortcut("Z")
+
+                Divider()
+
+                Button("查找") {
+                    // 聚焦搜索栏
+                    DispatchQueue.main.async {
+                        appState.isSearching = true
+                    }
+                }
+                .keyboardShortcut("f")
+            }
+
+            // 格式菜单
+            CommandMenu("格式") {
+                Button("粗体") {
+                    NotificationCenter.default.post(name: .init("toggleBold"), object: nil)
+                }
+                .keyboardShortcut("b")
+
+                Button("斜体") {
+                    NotificationCenter.default.post(name: .init("toggleItalic"), object: nil)
+                }
+                .keyboardShortcut("i")
+
+                Button("下划线") {
+                    NotificationCenter.default.post(name: .init("toggleUnderline"), object: nil)
+                }
+                .keyboardShortcut("u")
             }
 
             // 视图菜单
@@ -61,12 +106,19 @@ struct NotoApp: App {
                 Button("切换侧边栏") {
                     toggleSidebar()
                 }
-                .keyboardShortcut("b")
+                .keyboardShortcut("b", modifiers: [.command, .shift])
 
                 Button("主题编辑器") {
                     appState.showThemeEditor = true
                 }
-                .keyboardShortcut("t")
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("全屏") {
+                    NSApp.keyWindow?.toggleFullScreen(nil)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .control])
 
                 Divider()
 
@@ -102,5 +154,10 @@ struct NotoApp: App {
     private func toggleSidebar() {
         NSApp.keyWindow?.firstResponder?
             .tryToPerform(#selector(NSSplitViewController.toggleSidebar(_:)), with: nil)
+    }
+
+    private func exportNote() {
+        guard let note = appState.editingNote else { return }
+        NoteListView.exportNote(note: note, state: appState)
     }
 }

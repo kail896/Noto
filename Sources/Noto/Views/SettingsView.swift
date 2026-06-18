@@ -121,18 +121,6 @@ struct SettingsView: View {
                     .foregroundColor(state.currentTheme.secondaryTextColorSwift)
             }
 
-            Section("外观") {
-                Picker("外观模式", selection: Binding(
-                    get: { state.darkModePreference },
-                    set: { state.darkModePreference = $0; state.saveData() }
-                )) {
-                    ForEach(DarkModePreference.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
             Section("快捷键") {
                 shortcutRow("新建笔记", "⌘N")
                 shortcutRow("搜索", "⌘F")

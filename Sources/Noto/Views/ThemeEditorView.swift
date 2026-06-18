@@ -21,7 +21,7 @@ struct ThemeEditorView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text("主题自定义")
+                    Text("自定义主题")
                         .font(.system(size: 16, weight: .semibold))
                 }
 
