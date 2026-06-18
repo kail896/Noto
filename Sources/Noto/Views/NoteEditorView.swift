@@ -779,10 +779,17 @@ struct NoteEditorView: View {
     }
 
     private func toggleFontSize(increase: Bool) {
-        guard let textView = findFirstResponderTextView() else { return }
-        let currentSize = textView.font.map { Double($0.pointSize) } ?? state.currentTheme.fontConfiguration.size
-        let newSize = increase ? min(currentSize + 2, 48) : max(currentSize - 2, 10)
-        textView.font = NSFont.systemFont(ofSize: newSize)
+        guard let tv = findFirstResponderTextView(), let storage = tv.textStorage else { return }
+        let newSize = increase ? min((tv.font?.pointSize ?? 12) + 2, 48) : max((tv.font?.pointSize ?? 12) - 2, 10)
+        let newFont = NSFont.systemFont(ofSize: newSize)
+        tv.font = newFont
+        // 将新字号写入 text storage（保存时会被持久化）
+        if storage.length > 0 {
+            storage.addAttribute(.font, value: newFont, range: NSRange(location: 0, length: storage.length))
+        }
+        // 触发保存
+        editorContent = tv.attributedString()
+        isEditing = true
         autoSave(note: state.editingNote ?? Note.empty())
     }
 
@@ -1093,8 +1100,6 @@ struct RichTextView: NSViewRepresentable {
             context.coordinator.isUpdating = false
         }
 
-        textView.font = NSFont(name: theme.fontConfiguration.family, size: theme.fontConfiguration.size)
-            ?? NSFont.systemFont(ofSize: theme.fontConfiguration.size)
         textView.textColor = NSColor(theme.textColorSwift)
         textView.linkTextAttributes = [
             .foregroundColor: NSColor(theme.accentColorSwift),
