@@ -229,6 +229,51 @@ final class AppState {
 
         // 清理过期回收站笔记
         cleanupTrash()
+
+        // 监听 iCloud 文件变化实现近实时同步
+        setupFileMonitor()
+    }
+
+    private var syncTimer: Timer?
+    private var syncLastMod: Date?
+
+    /// 定时检查 iCloud 文件变化（每 5 秒）
+    private func setupFileMonitor() {
+        let dir = Self.currentStorageDir
+        let path = dir.appendingPathComponent("notes.json").path
+        syncLastMod = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let newMod = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+            guard let newMod, syncLastMod == nil || newMod != syncLastMod else { return }
+            syncLastMod = newMod
+            reloadFromDisk(dir: dir)
+        }
+    }
+
+    /// 从磁盘重新加载数据（不丢失当前编辑状态）
+    private func reloadFromDisk(dir: URL) {
+        let decoder = JSONDecoder()
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("notes.json")),
+              let newNotes = try? decoder.decode([Note].self, from: data) else { return }
+
+        // 只合并外部变更，不覆盖正在编辑的笔记
+        if let editingId = editingNote?.id {
+            let externalNotes = newNotes.filter { $0.id != editingId }
+            if let currentNote = notes.first(where: { $0.id == editingId }) {
+                notes = externalNotes + [currentNote]
+            } else {
+                notes = newNotes
+            }
+        } else {
+            notes = newNotes
+        }
+
+        if let folderData = try? Data(contentsOf: dir.appendingPathComponent("folders.json")),
+           let newFolders = try? decoder.decode([Folder].self, from: folderData) {
+            folders = newFolders
+        }
     }
 
     // MARK: - 笔记操作
